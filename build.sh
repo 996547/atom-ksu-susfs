@@ -18,6 +18,13 @@ case "$WITH_SUSFS" in
   1|true|yes|on|TRUE) WITH_SUSFS=1 ;;
   *) WITH_SUSFS=0 ;;
 esac
+# KSU 开关（隔离测试用）：默认 1 开启；设为 0 则编译纯基础内核（同时强制关闭依赖 KSU 的 SUSFS）
+WITH_KSU="${WITH_KSU:-1}"
+case "$WITH_KSU" in
+  1|true|yes|on|TRUE) WITH_KSU=1 ;;
+  *) WITH_KSU=0 ;;
+esac
+if [ "$WITH_KSU" = "0" ]; then WITH_SUSFS=0; fi
 SUSFS_REF="${SUSFS_REF:-}"
 
 BASE="$(cd "$(dirname "$0")" && pwd)"
@@ -149,9 +156,13 @@ cd "$SRC"
 echo "==> 5. 生成 defconfig (vendor/atom_user_defconfig)"
 make $MK O="$OUT" ARCH=arm64 vendor/atom_user_defconfig
 
-echo "==> 6. 校正内核配置"
+echo "==> 6. 校正内核配置 (KSU=$WITH_KSU SUSFS=$WITH_SUSFS)"
+if [ "$WITH_KSU" = "1" ]; then
+  ./scripts/config --file "$OUT/.config" -e CONFIG_KSU -d CONFIG_KSU_MANUAL_HOOK
+else
+  ./scripts/config --file "$OUT/.config" -d CONFIG_KSU -d CONFIG_KSU_MANUAL_HOOK
+fi
 ./scripts/config --file "$OUT/.config" \
-  -e CONFIG_KSU -d CONFIG_KSU_MANUAL_HOOK \
   -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL \
   -d CONFIG_LTO_CLANG -d CONFIG_LTO -d CONFIG_POLLY_CLANG \
   -d CONFIG_CC_STACKPROTECTOR_STRONG \

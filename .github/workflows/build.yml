@@ -7,6 +7,10 @@ on:
         description: 'Include SUSFS (uncheck for KernelSU-only build)'
         type: boolean
         default: true
+      with_ksu:
+        description: 'Include KernelSU (uncheck for base-kernel-only / isolation test)'
+        type: boolean
+        default: true
   push:
     branches: [ main, master ]
 
@@ -30,6 +34,7 @@ jobs:
       - name: Build kernel
         env:
           WITH_SUSFS: ${{ github.event.inputs.with_susfs }}
+          WITH_KSU: ${{ github.event.inputs.with_ksu }}
         run: bash build.sh
 
       - name: Upload AnyKernel3 zip
