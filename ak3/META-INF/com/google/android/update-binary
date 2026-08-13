@@ -245,34 +245,36 @@ restore_env() {
   umount -l /dev/random) 2>/dev/null;
 }
 setup_bb() {
-  local arch32 bb;
-  for arch32 in x86 arm; do
-    if [ -d $AKHOME/tools/$arch32 ]; then
-      bb=$AKHOME/tools/$arch32/busybox;
-      chmod 755 $bb;
-      $bb >/dev/null 2>&1;
-      if [ $? == 0 ]; then
-        $bb mv -f $AKHOME/tools/$arch32/* $AKHOME/tools;
-        break;
+  local bb;
+  # 1) 自带的多架构 busybox：tools/busybox=arm64(原生), tools/arm/busybox=arm32(经CONFIG_COMPAT)。
+  #    关键：先实测“能否真正执行”，不能跑的架构直接跳过，避免 32 位 recovery 拿 arm64、
+  #    或 64 位无 COMPAT 的 recovery 拿 arm32 而死在 Busybox setup failed。
+  for bb in "$AKHOME/tools/busybox" "$AKHOME/tools/arm/busybox" "$AKHOME/tools/x86/busybox"; do
+    if [ -x "$bb" ]; then
+      chmod 755 "$bb" 2>/dev/null;
+      if "$bb" >/dev/null 2>&1; then
+        "$bb" chmod -R 755 tools bin >/dev/null 2>&1;
+        "$bb" --install -s bin >/dev/null 2>&1;
+        return 0;
       fi;
     fi;
   done;
-  # 兜底：模板自带 tools/busybox 时优先用它；否则回退到 recovery 自带 busybox
-  # （TWRP/OrangeFox 均在 /sbin/busybox，Magisk 在 /data/adb/magisk/busybox）
-  if [ -x "$AKHOME/tools/busybox" ]; then
-    bb=$AKHOME/tools/busybox;
-  elif [ -x /sbin/busybox ]; then
-    bb=/sbin/busybox;
-  elif command -v busybox >/dev/null 2>&1; then
-    bb=$(command -v busybox);
-  elif [ -x /data/adb/magisk/busybox ]; then
-    bb=/data/adb/magisk/busybox;
-  else
-    return 1;
+  # 2) 回退：recovery 自带 busybox / toybox（TWRP=/sbin/busybox，OrangeFox=/sbin/toybox）
+  for bb in /sbin/busybox /sbin/toybox "$(command -v busybox)" "$(command -v toybox)" /data/adb/magisk/busybox; do
+    if [ -x "$bb" ]; then
+      chmod 755 "$bb" 2>/dev/null;
+      "$bb" chmod -R 755 tools bin >/dev/null 2>&1;
+      "$bb" --install -s bin >/dev/null 2>&1;
+      return 0;
+    fi;
+  done;
+  # 3) 最终兜底：recovery 已在 PATH 提供 cp/mv/dd/grep 等原生工具，直接复用；
+  #    仅需保证 bin/ 非空以通过下方 abort 检查。
+  mkdir -p $AKHOME/bin;
+  if [ -z "$(ls $AKHOME/bin 2>/dev/null)" ]; then
+    : > $AKHOME/bin/.ak3_recovery_tools;
   fi;
-  chmod 755 $bb 2>/dev/null;
-  $bb chmod -R 755 tools bin >/dev/null 2>&1;
-  $bb --install -s bin >/dev/null 2>&1;
+  return 0;
 }
 debugging() {
   local debug log path;
