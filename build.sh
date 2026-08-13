@@ -116,8 +116,14 @@ export ARCH=arm64
 export SUBARCH=arm64
 export CROSS_COMPILE="$GCC/bin/aarch64-linux-android-"
 export CLANG_TRIPLE=aarch64-linux-gnu-
-# 防御性：4.14 + 新版 clang 下把隐式声明等从错误降级为警告
-export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int"
+# 防御性：4.14 + 新版 clang 下把若干新警告从错误降级为警告，避免完整编译途中被打断。
+# -Wno-unknown-warning-option 确保任一未知告警选项本身不会触发错误。
+export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int \
+  -Wno-error=incompatible-pointer-types -Wno-error=array-bounds \
+  -Wno-error=stringop-overflow -Wno-error=shift-count-overflow \
+  -Wno-error=enum-conversion -Wno-error=unused-but-set-variable \
+  -Wno-error=address-of-packed-member -Wno-error=format \
+  -Wno-unknown-warning-option"
 
 OUT="$SRC/out"
 mkdir -p "$OUT"
@@ -131,7 +137,8 @@ echo "==> 6. 校正内核配置"
   -e CONFIG_KSU -e CONFIG_KSU_MANUAL_HOOK \
   -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL \
   -d CONFIG_LTO_CLANG -d CONFIG_LTO -d CONFIG_POLLY_CLANG \
-  -d CONFIG_CC_STACKPROTECTOR_STRONG
+  -d CONFIG_CC_STACKPROTECTOR_STRONG \
+  -d CONFIG_COMPAT_VDSO
 if [ "$WITH_SUSFS" = "1" ]; then
   ./scripts/config --file "$OUT/.config" \
     -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT \
