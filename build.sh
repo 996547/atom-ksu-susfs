@@ -39,13 +39,13 @@ dl() {  # url out
 # 其次回退到系统 clang / clang-18。
 pick_clang() {
   if command -v clang-14 >/dev/null 2>&1; then
-    export CC=clang-14; export LD=ld.lld-14
+    CLANG_BIN=clang-14; LLD_BIN=ld.lld-14
   elif command -v clang >/dev/null 2>&1; then
-    export CC=clang; export LD=ld.lld
+    CLANG_BIN=clang; LLD_BIN=ld.lld
   else
     echo "[!] 未找到 clang，请先安装 clang/lld"; exit 1
   fi
-  echo "    使用编译器: $CC / 链接器: $LD"
+  echo "    使用编译器: $CLANG_BIN / 链接器: $LLD_BIN"
 }
 
 echo "==> 1. 内核源码 (mt6873-dev/android_kernel_xiaomi_mt6885 @ cgroup-v2)"
@@ -115,22 +115,23 @@ pick_clang
 export ARCH=arm64
 export SUBARCH=arm64
 export CROSS_COMPILE="$GCC/bin/aarch64-linux-android-"
-export CLANG_TRIPLE=aarch64-linux-gnu-
-# 防御性：4.14 + 新版 clang 下把若干新警告从错误降级为警告，避免完整编译途中被打断。
-# -Wno-unknown-warning-option 确保任一未知告警选项本身不会触发错误。
+# 关键：4.14 内核 Makefile 写死 `CC = $(CROSS_COMPILE)gcc`，会**覆盖**环境变量中的 CC，
+# 导致 clang 不生效、退回过旧的 GCC 4.9 而无法编译此内核。必须把 CC/LD/CLANG_TRIPLE/HOSTCC
+# 放到 make 命令行（命令行赋值优先级高于 Makefile）才能真正走 clang。
+MK="CC=$CLANG_BIN LD=$LLD_BIN CLANG_TRIPLE=aarch64-linux-gnu- HOSTCC=$CLANG_BIN"
+# 防御性：4.14 + clang 下把若干告警从错误降级为警告，避免完整编译途中被打断。
+# 仅保留 clang 真实存在的告警名；-Wno-unknown-warning-option 确保未知选项本身不报错。
 export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int \
   -Wno-error=incompatible-pointer-types -Wno-error=array-bounds \
-  -Wno-error=stringop-overflow -Wno-error=shift-count-overflow \
-  -Wno-error=enum-conversion -Wno-error=unused-but-set-variable \
-  -Wno-error=address-of-packed-member -Wno-error=format \
-  -Wno-unknown-warning-option"
+  -Wno-error=format -Wno-error=enum-conversion \
+  -Wno-error=address-of-packed-member -Wno-unknown-warning-option"
 
 OUT="$SRC/out"
 mkdir -p "$OUT"
 cd "$SRC"
 
 echo "==> 5. 生成 defconfig (vendor/atom_user_defconfig)"
-make O="$OUT" ARCH=arm64 vendor/atom_user_defconfig
+make $MK O="$OUT" ARCH=arm64 vendor/atom_user_defconfig
 
 echo "==> 6. 校正内核配置"
 ./scripts/config --file "$OUT/.config" \
@@ -147,10 +148,10 @@ if [ "$WITH_SUSFS" = "1" ]; then
     -e CONFIG_KSU_SUSFS_TRY_UMOUNT -e CONFIG_KSU_SUSFS_AUTO_SET_SUS_KSTAT \
     -e CONFIG_KSU_SUSFS_SUS_SU
 fi
-make O="$OUT" ARCH=arm64 olddefconfig
+make $MK O="$OUT" ARCH=arm64 olddefconfig
 
 build_kernel() {
-  make O="$OUT" ARCH=arm64 -j"$(nproc)" 2>&1 | tee "$BASE/build.log"
+  make $MK O="$OUT" ARCH=arm64 -j"$(nproc)" 2>&1 | tee "$BASE/build.log"
 }
 
 echo "==> 7. 开始编译 ..."
@@ -159,7 +160,7 @@ if ! build_kernel; then
     echo "[!] 带 SUSFS 编译失败，自动回退为仅 KernelSU 重建 ..."
     WITH_SUSFS=0
     ./scripts/config --file "$OUT/.config" -d CONFIG_KSU_SUSFS
-    make O="$OUT" ARCH=arm64 olddefconfig
+    make $MK O="$OUT" ARCH=arm64 olddefconfig
     rm -rf "$OUT/drivers/kernelsu" "$OUT/arch/arm64/boot"
     if ! build_kernel; then
       echo "[!] 编译失败，最后 80 行日志："; tail -80 "$BASE/build.log"; exit 1
