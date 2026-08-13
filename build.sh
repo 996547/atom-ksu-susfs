@@ -64,11 +64,11 @@ tar -xzf "$BASE/susu.tar.gz" -C "$BASE"
 SU_SRC=$(find "$BASE" -maxdepth 1 -type d -name 'SukiSU-Ultra-*' | head -1)
 mkdir -p "$SRC/KernelSU"
 cp -a "$SU_SRC/." "$SRC/KernelSU/"
-# 修复 nongki kernel_compat.c 中 ksu_access_ok 函数定义漏写返回类型 int（老 C89 implicit-int 写法，
-# GCC 4.9 宽松放过，clang-14 严格 C99 报错）。宏定义长这样：ksu_access_ok(addr,size)=access_ok(...)，
-# 因此这里用 'const void *addr' 精确匹配函数定义（不含 #define 前缀的宏）。
-sed -i 's/\(\s*\)ksu_access_ok(const void \*addr/\1int ksu_access_ok(const void *addr/' \
-  "$SRC/KernelSU/kernel/kernel_compat.c"
+# 注意：nongki 自带 kernel_compat.c 此处本没有 ksu_access_ok 函数。只有带 SUSFS 时，
+# 步骤 4 的 10_enable_susfs_for_ksu.patch 才会新增该函数定义，并与 kernel_compat.h 里的
+#   #define ksu_access_ok(addr, size) access_ok(...)
+# 同名冲突（预处理器会把函数定义的名字展开成垃圾代码，clang 报
+# "function cannot return function type"）。真正的修复（#undef）放在步骤 4 打补丁之后执行（见下）。
 
 # ---------- SUSFS ----------
 SUSFS_PATCHED=0
@@ -86,6 +86,15 @@ if [ "$WITH_SUSFS" = "1" ]; then
     # (c) KernelSU 侧补丁（SukiSU nongki 上 6/7 文件可合入，selinux/rules.c 一处 hunk 上下文不同，稍后手动补）
     echo "    应用 KernelSU 补丁 (10_enable_susfs_for_ksu.patch)..."
     patch -p1 --forward -d "$SRC/KernelSU" < "$KP/KernelSU/10_enable_susfs_for_ksu.patch" 2>&1 | grep -iE "fail|rej" || true
+    # 修复 SUSFS 补丁引入的「宏/函数同名冲突」：kernel_compat.h 的
+    #   #define ksu_access_ok(addr, size) access_ok(...)
+    # 会在预处理阶段把 kernel_compat.c 里新加的函数定义 int ksu_access_ok(const void *addr, ...)
+    # 展开成垃圾代码，clang 报 "function cannot return function type 'int (const void *)'"。
+    # 在定义前 #undef ksu_access_ok 即可消除冲突；函数体本身只调 access_ok，语义不变，
+    # 其它 .c 文件仍走宏 -> access_ok，行为一致。仅匹配函数定义行（结尾 ')' 紧跟 '{'），
+    # 不误伤 extern 声明与调用点。
+    sed -i -E 's/^(\s*)(int ksu_access_ok\(const void \*addr, unsigned long size\) \{)/\1#undef ksu_access_ok\n\1\2/' \
+      "$SRC/KernelSU/kernel/kernel_compat.c"
     # (d) 手动补 selinux/rules.c 被 reject 的那一处（允许 zygote unmount，SUSFS try_umount 所需）
     SRC="$SRC" python3 - <<'PY' 2>/dev/null || true
 import os
