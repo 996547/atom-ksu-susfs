@@ -173,6 +173,56 @@ fi
 # 启动而早期 panic -> 卡 Redmi logo 反复重启。这里强制改成正确的 atom DTB。
 ./scripts/config --file "$OUT/.config" \
   --set-str CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES "mediatek/atom"
+
+# ============================================================================
+#  6b. 开机兼容性校正 —— 依据「原厂内核 IKCONFIG 提取的真实配置」逐项对齐
+#
+#  取证方法：从设备 boot.img 抽出 stock kernel，其内置 IKCFG_ST..IKCFG_ED 解出
+#  完整 .config（4.14.186，4542 项），与我们编出的内核内置 config（4448 项）逐项 diff。
+#  ABI 级配置（PAGE_SHIFT=12 / VA_BITS=39 / PGTABLE_LEVELS=3 / NR_CPUS=8 / HZ=250）
+#  两边完全一致，故排除页大小、地址位宽这类「静默秒死」病因；真正的危险差异如下。
+#
+#  ⚠ 这些选项若 AstroKernel 源码树未提供，olddefconfig 会自动丢弃，不会导致编译失败，
+#    因此统一用 -e/-d 声明式对齐即可，无需条件判断。
+# ============================================================================
+echo "==> 6b. 开机兼容性校正（对齐原厂 IKCONFIG）"
+
+# (1) 【头号嫌疑】PANIC_ON_OOPS：原厂=n，我们=y。
+#     开启后任何「本可恢复的 oops」都会立即升级为 panic 重启，屏幕来不及有任何输出
+#     —— 完全吻合「只有 logo、无文字、静默重启」。原厂关闭，故遇到同类问题只打
+#     WARNING 继续跑（原厂 dmesg 里就有一条 RCU tree_plugin.h:329 WARNING 但系统照跑）。
+./scripts/config --file "$OUT/.config" -d CONFIG_PANIC_ON_OOPS
+
+# (2) 【关键诊断能力】MTK AEE：原厂全开，我们全关。
+#     AEE-IPANIC 是 MTK 平台把 kernel panic 落盘到 expdb 分区的原生机制。
+#     之前 /proc/last_kmsg 被 recovery 覆盖、抓不到崩溃现场，根因就是缺这套。
+./scripts/config --file "$OUT/.config" \
+  -e CONFIG_MTK_AEE_FEATURE -e CONFIG_MTK_AEE_AED \
+  -e CONFIG_MTK_AEE_IPANIC -e CONFIG_MTK_AEE_HANG_DETECT
+
+# (3) 【挂载 /data 必需】缺任一都会「内核起来了但挂不上 data」→ 重启循环
+#     UNICODE: ext4/f2fs casefold 支持；MMC_CRYPTO_LEGACY: 内联硬件加密(FBE 解密)
+./scripts/config --file "$OUT/.config" \
+  -e CONFIG_UNICODE -e CONFIG_MMC_CRYPTO_LEGACY
+
+# (4) TEE / 可信执行环境（原厂 CONFIG_TEE=y + Microtrust TZ 驱动）
+./scripts/config --file "$OUT/.config" \
+  -e CONFIG_TEE -e CONFIG_MTK_SVP_ON_MTEE_SUPPORT -e CONFIG_MTK_DRM_KEY_MNG_SUPPORT
+
+# (5) MIUI 用户态依赖的 sysfs 节点，缺失会让 MIUI init 找不到节点而失败
+./scripts/config --file "$OUT/.config" \
+  -e CONFIG_MIHW -e CONFIG_MIGT -e CONFIG_MILLET -e CONFIG_MI_MEMORY_SYSFS
+
+# (6) WLAN 驱动：原厂=n（走模块加载），我们=y（编进内核）。
+#     编进内核会在早期 probe，一旦失败 + PANIC_ON_OOPS=y 就是「探测失败即秒重启」。
+#     这里改回与原厂一致，消除早期 probe 风险。
+./scripts/config --file "$OUT/.config" -d CONFIG_WLAN_DRV_BUILD_IN
+
+# (7) 内核 cmdline 与原厂完全对齐：原厂末尾是 slub_debug=O（字母 O，
+#     含义「对会增大对象体积的 cache 关闭 debug」），我们是 slub_debug=0（数字零，
+#     非法 flag，内核解析时会走 unknown 分支）。一字之差，顺手改正。
+./scripts/config --file "$OUT/.config" \
+  --set-str CONFIG_CMDLINE "console=tty0 console=ttyMT3,921600n1 root=/dev/ram vmalloc=496M slub_max_order=0 slub_debug=O "
 if [ "$WITH_SUSFS" = "1" ]; then
   ./scripts/config --file "$OUT/.config" \
     -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT \
