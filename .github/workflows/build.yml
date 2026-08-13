@@ -13,7 +13,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,8 +21,11 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
+          # clang-14 + lld-14 对该 4.14 内核兼容性最佳；若仓库不含 14 则回退到系统 clang/lld
           sudo apt-get install -y git curl zip bison flex make bc \
-            libssl-dev libncurses5-dev ccache
+            libssl-dev libncurses5-dev ccache \
+            clang-14 lld-14 llvm-14 || sudo apt-get install -y clang lld llvm
+          clang --version 2>/dev/null | head -1 || clang-14 --version | head -1
 
       - name: Build kernel
         env:
