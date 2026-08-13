@@ -244,36 +244,48 @@ restore_env() {
   done;
   umount -l /dev/random) 2>/dev/null;
 }
+bb_applets="sh cp mv rm rmdir mkdir ls cat chmod chown dd grep egrep fgrep sed awk cut tr od printf echo date basename dirname readlink find mount umount unzip gzip gunzip tar sync sleep touch wc head tail sort uniq seq expr id stat ln test true false which xargs strings cmp";
+# 用可用的 multiplexer 手工建立 applet 软链接（busybox --install 不可用/toybox 无该参数时的兜底）
+bb_link() {
+  local mux="$1" ap;
+  for ap in $bb_applets; do
+    "$mux" ln -sf "$mux" "$AKHOME/bin/$ap" 2>/dev/null \
+      || ln -sf "$mux" "$AKHOME/bin/$ap" 2>/dev/null;
+  done;
+}
+# bin/ 是否已被填充（注意：ls 默认不列出以点开头的文件，占位文件不能带点）
+bb_ready() {
+  [ -n "$(ls $AKHOME/bin 2>/dev/null)" ];
+}
 setup_bb() {
   local bb;
+  mkdir -p $AKHOME/bin;
   # 1) 自带的多架构 busybox：tools/busybox=arm64(原生), tools/arm/busybox=arm32(经CONFIG_COMPAT)。
-  #    关键：先实测“能否真正执行”，不能跑的架构直接跳过，避免 32 位 recovery 拿 arm64、
-  #    或 64 位无 COMPAT 的 recovery 拿 arm32 而死在 Busybox setup failed。
+  #    不能用 [ -x ] 做前置判断：zip 内权限位常被 recovery 的 unzip 丢弃（表现为 644），
+  #    必须先强制 chmod 再“实测能否真正执行”，不能跑的架构才跳过。
   for bb in "$AKHOME/tools/busybox" "$AKHOME/tools/arm/busybox" "$AKHOME/tools/x86/busybox"; do
-    if [ -x "$bb" ]; then
-      chmod 755 "$bb" 2>/dev/null;
-      if "$bb" >/dev/null 2>&1; then
-        "$bb" chmod -R 755 tools bin >/dev/null 2>&1;
-        "$bb" --install -s bin >/dev/null 2>&1;
-        return 0;
-      fi;
-    fi;
+    [ -f "$bb" ] || continue;
+    chmod 755 "$bb" 2>/dev/null;
+    "$bb" >/dev/null 2>&1 || continue;
+    "$bb" chmod -R 755 tools bin >/dev/null 2>&1;
+    "$bb" --install -s "$AKHOME/bin" >/dev/null 2>&1;
+    bb_ready || bb_link "$bb";
+    bb_ready && return 0;
   done;
   # 2) 回退：recovery 自带 busybox / toybox（TWRP=/sbin/busybox，OrangeFox=/sbin/toybox）
+  #    toybox 不支持 --install，必须校验 bin 真被填充后才能 return，否则继续往下兜底。
   for bb in /sbin/busybox /sbin/toybox "$(command -v busybox)" "$(command -v toybox)" /data/adb/magisk/busybox; do
-    if [ -x "$bb" ]; then
-      chmod 755 "$bb" 2>/dev/null;
-      "$bb" chmod -R 755 tools bin >/dev/null 2>&1;
-      "$bb" --install -s bin >/dev/null 2>&1;
-      return 0;
-    fi;
+    [ -n "$bb" ] && [ -f "$bb" ] || continue;
+    chmod 755 "$bb" 2>/dev/null;
+    "$bb" >/dev/null 2>&1 || continue;
+    "$bb" chmod -R 755 tools bin >/dev/null 2>&1;
+    "$bb" --install -s "$AKHOME/bin" >/dev/null 2>&1;
+    bb_ready || bb_link "$bb";
+    bb_ready && return 0;
   done;
   # 3) 最终兜底：recovery 已在 PATH 提供 cp/mv/dd/grep 等原生工具，直接复用；
-  #    仅需保证 bin/ 非空以通过下方 abort 检查。
-  mkdir -p $AKHOME/bin;
-  if [ -z "$(ls $AKHOME/bin 2>/dev/null)" ]; then
-    : > $AKHOME/bin/.ak3_recovery_tools;
-  fi;
+  #    仅需保证 bin/ 非空以通过下方 abort 检查（占位文件不得以点开头）。
+  bb_ready || : > $AKHOME/bin/ak3_recovery_tools;
   return 0;
 }
 debugging() {

@@ -212,7 +212,17 @@ echo "==> 8. 打包 AnyKernel3"
 mkdir -p "$BASE/ak3"
 cp "$IMG" "$BASE/ak3/Image.gz-dtb"
 cd "$BASE/ak3"
+# 关键：git 只对 100755 保留可执行位，仓库内 busybox/脚本为 100644，
+# 若不在打包前补 chmod，zip 会存成 0644，设备上 busybox 不可执行 → Busybox setup failed。
+chmod 755 tools/busybox tools/arm/busybox tools/x86/busybox 2>/dev/null || true
+chmod 755 tools/ak3-core.sh META-INF/com/google/android/update-binary anykernel.sh 2>/dev/null || true
+find . -type d -exec chmod 755 {} + 2>/dev/null || true
+echo "--- 打包前权限确认 ---"
+ls -l tools/busybox tools/arm/busybox META-INF/com/google/android/update-binary
 rm -f "$BASE/atom-ksu-susfs-AnyKernel3.zip"
 zip -r9 "$BASE/atom-ksu-susfs-AnyKernel3.zip" . -x "*.git*"
+echo "--- zip 内权限确认 ---"
+unzip -Z -l -v "$BASE/atom-ksu-susfs-AnyKernel3.zip" 2>/dev/null | grep -E 'busybox|update-binary' || \
+  unzip -l "$BASE/atom-ksu-susfs-AnyKernel3.zip" | grep -E 'busybox|update-binary'
 echo "==> 刷机包: $BASE/atom-ksu-susfs-AnyKernel3.zip"
 echo "DONE"
