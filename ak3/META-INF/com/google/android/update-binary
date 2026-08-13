@@ -257,10 +257,22 @@ setup_bb() {
       fi;
     fi;
   done;
-  bb=$AKHOME/tools/busybox;
-  chmod 755 $bb;
-  $bb chmod -R 755 tools bin;
-  $bb --install -s bin;
+  # 兜底：模板自带 tools/busybox 时优先用它；否则回退到 recovery 自带 busybox
+  # （TWRP/OrangeFox 均在 /sbin/busybox，Magisk 在 /data/adb/magisk/busybox）
+  if [ -x "$AKHOME/tools/busybox" ]; then
+    bb=$AKHOME/tools/busybox;
+  elif [ -x /sbin/busybox ]; then
+    bb=/sbin/busybox;
+  elif command -v busybox >/dev/null 2>&1; then
+    bb=$(command -v busybox);
+  elif [ -x /data/adb/magisk/busybox ]; then
+    bb=/data/adb/magisk/busybox;
+  else
+    return 1;
+  fi;
+  chmod 755 $bb 2>/dev/null;
+  $bb chmod -R 755 tools bin >/dev/null 2>&1;
+  $bb --install -s bin >/dev/null 2>&1;
 }
 debugging() {
   local debug log path;
