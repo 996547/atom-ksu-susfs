@@ -181,6 +181,18 @@ if [ "$WITH_SUSFS" = "1" ]; then
     -e CONFIG_KSU_SUSFS_TRY_UMOUNT -e CONFIG_KSU_SUSFS_AUTO_SET_SUS_KSTAT \
     -e CONFIG_KSU_SUSFS_SUS_SU
 fi
+# 调试开关：开启 pstore/ramoops，使 bootloop 后的内核崩溃日志能在 recovery 里被读出
+# （/sys/fs/pstore/console-ramoops-0）。仅抓日志时打开，不影响正常构建产物功能。
+WITH_PSTORE="${WITH_PSTORE:-0}"
+case "$WITH_PSTORE" in
+  1|true|yes|on|TRUE) WITH_PSTORE=1 ;;
+  *) WITH_PSTORE=0 ;;
+esac
+if [ "$WITH_PSTORE" = "1" ]; then
+  ./scripts/config --file "$OUT/.config" \
+    -e CONFIG_PSTORE -e CONFIG_PSTORE_CONSOLE -e CONFIG_PSTORE_RAM \
+    -e CONFIG_PSTORE_PMSG -e CONFIG_PSTORE_FTRACE -e CONFIG_PSTORE_ZONE
+fi
 make $MK O="$OUT" ARCH=arm64 olddefconfig
 
 build_kernel() {

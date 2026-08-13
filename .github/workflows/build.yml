@@ -11,6 +11,10 @@ on:
         description: 'Include KernelSU (uncheck for base-kernel-only / isolation test)'
         type: boolean
         default: true
+      with_pstore:
+        description: 'Enable pstore/ramoops to capture bootloop kernel panic log (debug only)'
+        type: boolean
+        default: false
   push:
     branches: [ main, master ]
 
@@ -35,6 +39,7 @@ jobs:
         env:
           WITH_SUSFS: ${{ github.event.inputs.with_susfs }}
           WITH_KSU: ${{ github.event.inputs.with_ksu }}
+          WITH_PSTORE: ${{ github.event.inputs.with_pstore }}
         run: bash build.sh
 
       - name: Upload AnyKernel3 zip
