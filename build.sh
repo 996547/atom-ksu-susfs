@@ -151,11 +151,17 @@ make $MK O="$OUT" ARCH=arm64 vendor/atom_user_defconfig
 
 echo "==> 6. 校正内核配置"
 ./scripts/config --file "$OUT/.config" \
-  -e CONFIG_KSU -e CONFIG_KSU_MANUAL_HOOK \
+  -e CONFIG_KSU -d CONFIG_KSU_MANUAL_HOOK \
   -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL \
   -d CONFIG_LTO_CLANG -d CONFIG_LTO -d CONFIG_POLLY_CLANG \
   -d CONFIG_CC_STACKPROTECTOR_STRONG \
   -d CONFIG_COMPAT_VDSO
+# 关键：defconfig 的 APPENDED_DTB_IMAGE_NAMES 写的是 "mediatek/mt6873"（通用参考板，
+# model="MT6873"），并非 atom 设备。atom 的板级 DTS 是 atom.dts（model="ATOM"），
+# 编译产物为 atom.dtb。若把 mt6873 通用板 DTB 附进 Image.gz-dtb，内核会用不匹配的设备树
+# 启动而早期 panic -> 卡 Redmi logo 反复重启。这里强制改成正确的 atom DTB。
+./scripts/config --file "$OUT/.config" \
+  --set-str CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES "mediatek/atom"
 if [ "$WITH_SUSFS" = "1" ]; then
   ./scripts/config --file "$OUT/.config" \
     -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT \
