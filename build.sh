@@ -64,6 +64,11 @@ tar -xzf "$BASE/susu.tar.gz" -C "$BASE"
 SU_SRC=$(find "$BASE" -maxdepth 1 -type d -name 'SukiSU-Ultra-*' | head -1)
 mkdir -p "$SRC/KernelSU"
 cp -a "$SU_SRC/." "$SRC/KernelSU/"
+# 修复 nongki kernel_compat.c 中 ksu_access_ok 函数定义漏写返回类型 int（老 C89 implicit-int 写法，
+# GCC 4.9 宽松放过，clang-14 严格 C99 报错）。宏定义长这样：ksu_access_ok(addr,size)=access_ok(...)，
+# 因此这里用 'const void *addr' 精确匹配函数定义（不含 #define 前缀的宏）。
+sed -i 's/\(\s*\)ksu_access_ok(const void \*addr/\1int ksu_access_ok(const void *addr/' \
+  "$SRC/KernelSU/kernel/kernel_compat.c"
 
 # ---------- SUSFS ----------
 SUSFS_PATCHED=0
@@ -121,7 +126,9 @@ export CROSS_COMPILE="$GCC/bin/aarch64-linux-android-"
 MK="CC=$CLANG_BIN LD=$LLD_BIN CLANG_TRIPLE=aarch64-linux-gnu- HOSTCC=$CLANG_BIN"
 # 防御性：4.14 + clang 下把若干告警从错误降级为警告，避免完整编译途中被打断。
 # 仅保留 clang 真实存在的告警名；-Wno-unknown-warning-option 确保未知选项本身不报错。
-export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int \
+# 注意：clang-14 中 implicit-int / implicit-function-declaration 默认就是 error（不是被 -Werror 升级），
+# 所以必须用 -Wno-... 直接关闭，-Wno-error=... 对它们无效。这是 4.14 老内核 + 新 clang 的标配。
+export KCFLAGS="-Wno-implicit-function-declaration -Wno-implicit-int \
   -Wno-error=incompatible-pointer-types -Wno-error=array-bounds \
   -Wno-error=format -Wno-error=enum-conversion \
   -Wno-error=address-of-packed-member -Wno-unknown-warning-option"
