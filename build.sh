@@ -184,7 +184,16 @@ fi
   -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL \
   -d CONFIG_LTO_CLANG -d CONFIG_LTO -d CONFIG_POLLY_CLANG \
   -d CONFIG_CC_STACKPROTECTOR_STRONG \
-  -d CONFIG_COMPAT_VDSO
+  -d CONFIG_COMPAT_VDSO \
+  -d CONFIG_DEBUG_INFO -d CONFIG_DEBUG_INFO_REDUCED \
+  -d CONFIG_DEBUG_INFO_SPLIT -d CONFIG_DEBUG_INFO_DWARF4 \
+  -d CONFIG_DEBUG_INFO_DWARF5 -d CONFIG_GDB_SCRIPTS \
+  -d CONFIG_DEBUG_KERNEL
+# 关键：4.14.186 原厂 defconfig 默认开启 CONFIG_DEBUG_INFO，clang-14 会据此在汇编
+# 产物里吐 `.file 0` / `.loc` 调试指令，而 GCC 4.9 自带的旧 GNU as 不认 `.file 0`
+# （报 "file number less than one" / "junk at end of line, first unrecognized
+# character is '0'"），编译在 arch/arm64/mm/fault.o 处失败。4.14.336 能编正是因为它
+# 没开调试信息。关掉 DEBUG_INFO 后，4.14.186 走与 4.14.336 完全一致的外部 as 工具链。
 # 关键：本树 vendor/atom_user_defconfig 的 APPENDED_DTB_IMAGE_NAMES 写的是 "mediatek/mt6873"
 # （通用参考板，model="MT6873"），但**设备实际运行的 boot.img 内置 IKCONFIG 提取出的真实值
 # 是 "mediatek/atom"**（已核对 atom_stock_defconfig.txt）。atom 的板级 DTS 是 atom.dts
