@@ -41,7 +41,8 @@ dl() {  # url out
 }
 
 # ---------- 工具链：Clang + lld（内核 build.config 指定 clang + ld.lld） ----------
-# 该 4.14.336 内核官方用 clang + ld.lld 编译；GCC 4.9 太旧无法编译此内核。
+# 该 4.14.186 内核（atom 原厂树 kernel_redmi_atom）用 clang + ld.lld 编译；
+# GCC 4.9 太旧无法编译此内核。
 # 优先 clang-14（对 4.14 兼容性最佳，implicit-function-declaration 仍只是警告），
 # 其次回退到系统 clang / clang-18。
 pick_clang() {
@@ -55,10 +56,10 @@ pick_clang() {
   echo "    使用编译器: $CLANG_BIN / 链接器: $LLD_BIN"
 }
 
-echo "==> 1. 内核源码 (mt6873-dev/android_kernel_xiaomi_mt6885 @ cgroup-v2)"
-dl "https://github.com/mt6873-dev/android_kernel_xiaomi_mt6885/archive/refs/heads/cgroup-v2.tar.gz" kernel.tar.gz
+echo "==> 1. 内核源码 (mt6873-dev/kernel_redmi_atom @ android-4.14-r-stable = 4.14.186 原厂 atom 树)"
+dl "https://github.com/mt6873-dev/kernel_redmi_atom/archive/refs/heads/android-4.14-r-stable.tar.gz" kernel.tar.gz
 tar -xzf kernel.tar.gz
-SRC="$BASE/android_kernel_xiaomi_mt6885-cgroup-v2"
+SRC="$BASE/kernel_redmi_atom-android-4.14-r-stable"
 
 echo "==> 2. GCC 4.9 工具链 (LineageOS prebuilts，仅用作 binutils/汇编器)"
 dl "https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz" gcc.tar.gz
@@ -165,12 +166,12 @@ fi
 ./scripts/config --file "$OUT/.config" \
   -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL \
   -d CONFIG_LTO_CLANG -d CONFIG_LTO -d CONFIG_POLLY_CLANG \
-  -d CONFIG_CC_STACKPROTECTOR_STRONG \
   -d CONFIG_COMPAT_VDSO
-# 关键：defconfig 的 APPENDED_DTB_IMAGE_NAMES 写的是 "mediatek/mt6873"（通用参考板，
-# model="MT6873"），并非 atom 设备。atom 的板级 DTS 是 atom.dts（model="ATOM"），
-# 编译产物为 atom.dtb。若把 mt6873 通用板 DTB 附进 Image.gz-dtb，内核会用不匹配的设备树
-# 启动而早期 panic -> 卡 Redmi logo 反复重启。这里强制改成正确的 atom DTB。
+# 关键：本树 vendor/atom_user_defconfig 的 APPENDED_DTB_IMAGE_NAMES 写的是 "mediatek/mt6873"
+# （通用参考板，model="MT6873"），但**设备实际运行的 boot.img 内置 IKCONFIG 提取出的真实值
+# 是 "mediatek/atom"**（已核对 atom_stock_defconfig.txt）。atom 的板级 DTS 是 atom.dts
+# （model="ATOM"），编译产物为 atom.dtb。若把 mt6873 通用板 DTB 附进 Image.gz-dtb，内核会用
+# 不匹配的设备树启动而早期 panic -> 卡 Redmi logo 反复重启。这里强制改成正确的 atom DTB。
 ./scripts/config --file "$OUT/.config" \
   --set-str CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES "mediatek/atom"
 
@@ -182,7 +183,7 @@ fi
 #  ABI 级配置（PAGE_SHIFT=12 / VA_BITS=39 / PGTABLE_LEVELS=3 / NR_CPUS=8 / HZ=250）
 #  两边完全一致，故排除页大小、地址位宽这类「静默秒死」病因；真正的危险差异如下。
 #
-#  ⚠ 这些选项若 AstroKernel 源码树未提供，olddefconfig 会自动丢弃，不会导致编译失败，
+#  ⚠ 这些选项若本树（4.14.186 atom 原厂树）未提供，olddefconfig 会自动丢弃，不会导致编译失败，
 #    因此统一用 -e/-d 声明式对齐即可，无需条件判断。
 # ============================================================================
 echo "==> 6b. 开机兼容性校正（对齐原厂 IKCONFIG）"
