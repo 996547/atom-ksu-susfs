@@ -166,6 +166,7 @@ fi
 ./scripts/config --file "$OUT/.config" \
   -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL \
   -d CONFIG_LTO_CLANG -d CONFIG_LTO -d CONFIG_POLLY_CLANG \
+  -d CONFIG_CC_STACKPROTECTOR_STRONG \
   -d CONFIG_COMPAT_VDSO
 # 关键：本树 vendor/atom_user_defconfig 的 APPENDED_DTB_IMAGE_NAMES 写的是 "mediatek/mt6873"
 # （通用参考板，model="MT6873"），但**设备实际运行的 boot.img 内置 IKCONFIG 提取出的真实值
