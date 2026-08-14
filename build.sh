@@ -76,9 +76,15 @@ fi
 # ---------- 修复子目录 -Werror 覆盖全局 -Wno-error（编译致命阻塞）----------
 # 部分子目录 Makefile（如 drivers/gpu/drm/mediatek）在 KCFLAGS 之后追加 -Werror，
 # 导致 -Wno-error 被覆盖，clang-14 把 pointer-to-int-cast / unused 等当致命错误。
-# 直接把整棵树所有 Makefile 里的 -Werror 删掉（转告警），一把过完所有告警类错误。
-echo "==> 1c. 全局移除内核树内 -Werror（转告警，避免 clang 把告警当致命错误）"
-find "$SRC" -name Makefile -exec sed -i 's/-Werror[ =][A-Za-z0-9_-]*//g; s/-Werror//g' {} + 2>/dev/null || true
+# 只用「外科手术式」sed：删掉独立的 -Werror 词、并把 -Werror=xxx 改成 -Wno-error=xxx
+# （告警仍保留，只是不当致命错误）。**不能**用贪婪的 's/-Werror[ =][A-Za-z0-9_-]*//g'，
+# 否则会把同行的 -Wno-implicit-function-declaration 等标志一起吞掉，反而引出
+# 'unknown argument: -implicit-function-declaration' 这类更早的编译失败。
+echo "==> 1c. 外科手术式移除内核树内独立的 -Werror / -Werror= （转告警，不破坏 -Wno-* 标志）"
+find "$SRC" -name Makefile -exec sed -i \
+  -e 's/ -Werror / /g' -e 's/ -Werror$/ /g' -e 's/^-Werror / /g' \
+  -e 's/-Werror=/-Wno-error=/g' \
+  {} + 2>/dev/null || true
 
 echo "==> 2. GCC 4.9 工具链 (LineageOS prebuilts，仅用作 binutils/汇编器)"
 dl "https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz" gcc.tar.gz
