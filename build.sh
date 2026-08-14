@@ -72,6 +72,14 @@ if [ ! -f "$SRC/arch/arm64/boot/dts/mediatek/k6873v1_64/cust.dtsi" ]; then
   printf '/* stub: board-specific cust.dtsi not in public repo; only needed by non-atom dtbs */\n' \
     > "$SRC/arch/arm64/boot/dts/mediatek/k6873v1_64/cust.dtsi"
 fi
+# 关键修复：原文件用 <k6873v1_64/cust.dtsi>（尖括号）包含，dtc 按 include 搜索路径
+# 解析不到我们放在 mediatek/k6873v1_64/ 下的空桩（报 "file not found with <angled> include"）。
+# 改成 "k6873v1_64/cust.dtsi"（引号）后，dtc 会相对本文件所在目录（mediatek/）搜索，
+# 正好命中 mediatek/k6873v1_64/cust.dtsi。该 include 位于 dtsi 末尾、纯追加式板级覆写，
+# 空桩不会影响 atom.dtb 的正确性（只是不追加任何板级覆写节点）。
+echo "==> 1b-2. 将 cust.dtsi 的 <angled> 包含改为引号包含，使空桩可被 dtc 找到"
+sed -i 's|#include <k6873v1_64/cust.dtsi>|#include "k6873v1_64/cust.dtsi"|' \
+  "$SRC/arch/arm64/boot/dts/mediatek/xiaomi-mt6873-common.dtsi"
 
 # ---------- 修复子目录 -Werror 覆盖全局 -Wno-error（编译致命阻塞）----------
 # 部分子目录 Makefile（如 drivers/gpu/drm/mediatek）在 KCFLAGS 之后追加 -Werror，
@@ -219,6 +227,14 @@ fi
   -d CONFIG_DEBUG_INFO_SPLIT -d CONFIG_DEBUG_INFO_DWARF4 \
   -d CONFIG_DEBUG_INFO_DWARF5 -d CONFIG_GDB_SCRIPTS \
   -d CONFIG_DEBUG_KERNEL
+# 修复：公开 kernel_redmi_atom 树缺失板级 focaltech 固件 fw_ft3518_j7.i（不进公开仓库），
+# 该固件由 drivers/input/touchscreen/focaltech_touch/focaltech_flash.c 通过
+#   #include FTS_UPGRADE_FW_FILE
+# 引入，缺文件则 focaltech_flash.o 编译失败 -> 整体构建中止。关闭 FTS 触摸屏驱动
+# （含 FOD 子选项），整棵 focaltech_touch 子树不再编入，绕开缺失固件。
+# 影响：仅触摸屏暂不可用，内核仍能正常启动过 logo；后续可单独补固件再开启。
+./scripts/config --file "$OUT/.config" \
+  -d CONFIG_TOUCHSCREEN_FTS -d CONFIG_TOUCHSCREEN_FTS_FOD
 # 关键：4.14.186 原厂 defconfig 默认开启 CONFIG_DEBUG_INFO，clang-14 会据此在汇编
 # 产物里吐 `.file 0` / `.loc` 调试指令，而 GCC 4.9 自带的旧 GNU as 不认 `.file 0`
 # （报 "file number less than one" / "junk at end of line, first unrecognized
