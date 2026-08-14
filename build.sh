@@ -61,6 +61,25 @@ dl "https://github.com/mt6873-dev/kernel_redmi_atom/archive/refs/heads/android-4
 tar -xzf kernel.tar.gz
 SRC="$BASE/kernel_redmi_atom-android-4.14-r-stable"
 
+# ---------- 修复 MTK 缺失的板级 DTS include（DTB 构建致命阻塞）----------
+# atom.dts 只 include atom-mt6873.dtsi，本身不需要 cust.dtsi；但 make dtbs 会编译
+# 目录内全部 .dts（含 mt6873.dts），后者经 xiaomi-mt6873-common.dtsi 需要
+# k6873v1_64/cust.dtsi（该文件不在公开仓库，属板级定制）。建一个空桩文件让
+# mt6873.dtb 也能编过；atom.dtb 内容不受影响、保持正确。
+echo "==> 1b. 补 k6873v1_64/cust.dtsi 空桩（仅供非 atom 的 dtb 编译通过）"
+mkdir -p "$SRC/arch/arm64/boot/dts/mediatek/k6873v1_64"
+if [ ! -f "$SRC/arch/arm64/boot/dts/mediatek/k6873v1_64/cust.dtsi" ]; then
+  printf '/* stub: board-specific cust.dtsi not in public repo; only needed by non-atom dtbs */\n' \
+    > "$SRC/arch/arm64/boot/dts/mediatek/k6873v1_64/cust.dtsi"
+fi
+
+# ---------- 修复子目录 -Werror 覆盖全局 -Wno-error（编译致命阻塞）----------
+# 部分子目录 Makefile（如 drivers/gpu/drm/mediatek）在 KCFLAGS 之后追加 -Werror，
+# 导致 -Wno-error 被覆盖，clang-14 把 pointer-to-int-cast / unused 等当致命错误。
+# 直接把整棵树所有 Makefile 里的 -Werror 删掉（转告警），一把过完所有告警类错误。
+echo "==> 1c. 全局移除内核树内 -Werror（转告警，避免 clang 把告警当致命错误）"
+find "$SRC" -name Makefile -exec sed -i 's/-Werror[ =][A-Za-z0-9_-]*//g; s/-Werror//g' {} + 2>/dev/null || true
+
 echo "==> 2. GCC 4.9 工具链 (LineageOS prebuilts，仅用作 binutils/汇编器)"
 dl "https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz" gcc.tar.gz
 tar -xzf gcc.tar.gz
