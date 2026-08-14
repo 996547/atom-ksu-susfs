@@ -94,6 +94,28 @@ find "$SRC" -name Makefile -exec sed -i \
   -e 's/-Werror=/-Wno-error=/g' \
   {} + 2>/dev/null || true
 
+# ---------- 修复 lld 链接期 undefined symbol: stpcpy（链接致命阻塞）----------
+# clang-14 会把若干 sprintf/strcpy 模式优化成 stpcpy() 库调用，但 4.14 内核的
+# lib/string.c 只定义了 strcpy、没有 stpcpy，于是链接 vmlinux 时报
+# "undefined symbol: stpcpy"（tty_io.c / configfs.c / meta.c 等内核核心文件引用）。
+# 双保险：(a) 给 KCFLAGS 加 -fno-builtin-stpcpy/-fno-builtin-stpncpy，让 clang 不再
+# 吐这些库调用；(b) 直接在 lib/string.c 补一个 stpcpy 定义（即使仍有调用也能链上）。
+echo "==> 1d. 给 lib/string.c 补 stpcpy 定义（clang-14 库调用缺失符号）"
+cat >> "$SRC/lib/string.c" <<'EOF'
+
+#ifndef __HAVE_ARCH_STPCPY
+/* clang-14 emits stpcpy() libcalls for some sprintf/strcpy patterns; the 4.14
+   kernel does not provide stpcpy(), so define it here (strcpy-like semantics). */
+char *stpcpy(char *dest, const char *src)
+{
+	while ((*dest = *src) != '\0')
+		dest++, src++;
+	return dest;
+}
+EXPORT_SYMBOL(stpcpy);
+#endif
+EOF
+
 echo "==> 2. GCC 4.9 工具链 (LineageOS prebuilts，仅用作 binutils/汇编器)"
 dl "https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz" gcc.tar.gz
 tar -xzf gcc.tar.gz
@@ -200,7 +222,8 @@ export KCFLAGS="-Wno-implicit-function-declaration -Wno-implicit-int \
   -Wno-error=format -Wno-error=enum-conversion \
   -Wno-error=address-of-packed-member -Wno-unknown-warning-option \
   -Wno-error -Wno-unused-but-set-variable -Wno-unused-variable \
-  -Wno-unused-function -Wno-error=unused-but-set-variable"
+  -Wno-unused-function -Wno-error=unused-but-set-variable \
+  -fno-builtin-stpcpy -fno-builtin-stpncpy"
 # 兜底：4.14+SUSFS 在 clang-14 下会触发若干「set but not used / unused」被 -Werror 当错误
 # （如 mm/vmscan.c:3289 的 nid）。用全局 -Wno-error 把所有告警从错误降级为警告，
 # 避免反复 15 分钟构建卡在告警类错误；内核仍可正常编译与启动。
