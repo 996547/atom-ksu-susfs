@@ -150,6 +150,49 @@ cp -a "$SU_SRC/." "$SRC/KernelSU/"
 # 同名冲突（预处理器会把函数定义的名字展开成垃圾代码，clang 报
 # "function cannot return function type"）。真正的修复（#undef）放在步骤 4 打补丁之后执行（见下）。
 
+# ============================================================================
+#  3b. 【关键】把 KernelSU 真正挂进内核构建系统
+#
+#  取证：4.14.186 原厂树 mt6873-dev/kernel_redmi_atom 的 drivers/Makefile 与
+#  drivers/Kconfig **均无任何 kernelsu 钩子**（旧的 4.14.336 AstroKernel 树是
+#  "KSU-ready" 的，自带钩子，所以当时只把目录拷进去就能编）。换基线后 $SRC/KernelSU
+#  成了一个从未被编译的孤儿目录 —— CONFIG_KSU 连符号都不存在，步骤 6 的
+#  `scripts/config -e CONFIG_KSU` 被 olddefconfig 静默丢弃，编出的内核里
+#  KernelSU/SUSFS 字符串数为 0（已用 zlib 解压 Image.gz-dtb 实测确认）。
+#  SUSFS 的 CONFIG_KSU_SUSFS 定义在 KernelSU/kernel/Kconfig 内，未被 source 时
+#  一并失效，故 SUSFS 也是空的 —— 刷这种包等于白刷。
+#
+#  这里按 KernelSU 官方 setup.sh 的标准做法补钩子：
+#    drivers/kernelsu -> ../KernelSU/kernel  （符号链接）
+#    drivers/Makefile += obj-$(CONFIG_KSU) += kernelsu/
+#    drivers/Kconfig  += source "drivers/kernelsu/Kconfig"（插在 Device Drivers 菜单内）
+# ============================================================================
+echo "==> 3b. 将 KernelSU 挂入内核构建（drivers/kernelsu + Makefile/Kconfig 钩子）"
+rm -rf "$SRC/drivers/kernelsu"
+ln -sfn "../KernelSU/kernel" "$SRC/drivers/kernelsu"
+if ! grep -q 'kernelsu/' "$SRC/drivers/Makefile"; then
+  printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> "$SRC/drivers/Makefile"
+  echo "    [ok] drivers/Makefile 已追加 obj-\$(CONFIG_KSU) += kernelsu/"
+fi
+if ! grep -q 'drivers/kernelsu/Kconfig' "$SRC/drivers/Kconfig"; then
+  SRC="$SRC" python3 - <<'PY'
+import os
+p = os.path.join(os.environ["SRC"], "drivers", "Kconfig")
+lines = open(p).read().splitlines(True)
+# 插到最后一个 endmenu 之前，确保 KernelSU 菜单落在 "Device Drivers" 菜单内部
+idx = max(i for i, l in enumerate(lines) if l.strip() == "endmenu")
+lines.insert(idx, 'source "drivers/kernelsu/Kconfig"\n')
+open(p, "w").writelines(lines)
+print('    [ok] drivers/Kconfig 已插入 source "drivers/kernelsu/Kconfig"')
+PY
+fi
+# 校验挂载是否真的生效（链接可解析 + 两处钩子都在），否则直接失败，避免再产出空壳包
+if [ ! -f "$SRC/drivers/kernelsu/Makefile" ] || [ ! -f "$SRC/drivers/kernelsu/Kconfig" ]; then
+  echo "[!] 致命：drivers/kernelsu 链接不可解析，KernelSU 不会被编入。"; exit 1
+fi
+grep -n 'kernelsu' "$SRC/drivers/Makefile" | tail -2
+grep -n 'kernelsu' "$SRC/drivers/Kconfig" | tail -2
+
 # ---------- SUSFS ----------
 SUSFS_PATCHED=0
 if [ "$WITH_SUSFS" = "1" ]; then
@@ -236,8 +279,21 @@ echo "==> 5. 生成 defconfig (vendor/atom_user_defconfig)"
 make $MK O="$OUT" ARCH=arm64 vendor/atom_user_defconfig
 
 echo "==> 6. 校正内核配置 (KSU=$WITH_KSU SUSFS=$WITH_SUSFS)"
+# 【关键】CONFIG_KPROBES 必须打开。
+#   SukiSU 的 Kconfig：config KSU_MANUAL_HOOK  default y if !KPROBES
+#   原厂 atom defconfig 是 `# CONFIG_KPROBES is not set`（但 CONFIG_HAVE_KPROBES=y，
+#   即 arm64 架构本身支持），因此若不显式打开 KPROBES，MANUAL_HOOK 会被 Kconfig
+#   默认置 y —— 而「手动钩子」要求内核源码里预先打好 syscall hook 补丁（fs/exec.c、
+#   fs/open.c、fs/read_write.c、fs/stat.c 等），我们并未打这些补丁，结果会编出一个
+#   「有 KSU 代码但没有任何 su 钩子」的空壳内核（能开机，但管理器永远拿不到 root）。
+#   打开 KPROBES + 关闭 MANUAL_HOOK，走 kprobes 动态挂钩，这是 non-GKI 4.14 的标准做法，
+#   无需改动任何内核源码。
+# CONFIG_KPM：SukiSU 的内核补丁模块，仅适配 GKI，本机为 Non-GKI 4.14，明确关闭以免影响稳定性。
 if [ "$WITH_KSU" = "1" ]; then
-  ./scripts/config --file "$OUT/.config" -e CONFIG_KSU -d CONFIG_KSU_MANUAL_HOOK
+  ./scripts/config --file "$OUT/.config" \
+    -e CONFIG_KSU -d CONFIG_KSU_MANUAL_HOOK \
+    -e CONFIG_KPROBES -e CONFIG_KSU_LSM_SECURITY_HOOKS \
+    -d CONFIG_KPM
 else
   ./scripts/config --file "$OUT/.config" -d CONFIG_KSU -d CONFIG_KSU_MANUAL_HOOK
 fi
@@ -342,6 +398,32 @@ if [ "$WITH_PSTORE" = "1" ]; then
 fi
 make $MK O="$OUT" ARCH=arm64 olddefconfig
 
+# ============================================================================
+#  6c. 【硬闸门】编译前校验 KSU/SUSFS 是否真的落进 .config
+#
+#  历史教训：此前 KernelSU 目录没挂进构建系统，CONFIG_KSU 连符号都不存在，
+#  `scripts/config -e CONFIG_KSU` 静默失败、olddefconfig 又把未知符号丢掉，
+#  于是花了 16 分钟编出一个「版本正确但没有 KSU/SUSFS」的空壳包，还差点刷进设备。
+#  这里在开编前就断言，宁可立刻失败，也不要再浪费一整轮构建 + 一次刷机。
+# ============================================================================
+echo "==> 6c. 编译前配置硬校验"
+gate_fail=0
+if [ "$WITH_KSU" = "1" ]; then
+  grep -qE '^CONFIG_KSU=y'      "$OUT/.config" || { echo "[!] CONFIG_KSU 未启用"; gate_fail=1; }
+  grep -qE '^CONFIG_KPROBES=y'  "$OUT/.config" || { echo "[!] CONFIG_KPROBES 未启用（KSU 将无 su 钩子）"; gate_fail=1; }
+  if grep -qE '^CONFIG_KSU_MANUAL_HOOK=y' "$OUT/.config"; then
+    echo "[!] MANUAL_HOOK 仍为 y，但内核源码未打手动钩子补丁 → 会编出无 su 钩子的空壳"
+    gate_fail=1
+  fi
+fi
+if [ "$WITH_SUSFS" = "1" ]; then
+  grep -qE '^CONFIG_KSU_SUSFS=y' "$OUT/.config" || { echo "[!] CONFIG_KSU_SUSFS 未启用"; gate_fail=1; }
+fi
+echo "--- 实际生效的 KSU/SUSFS 配置 ---"
+grep -E '^CONFIG_(KSU|KPROBES|KPM)' "$OUT/.config" | sort | head -30
+[ "$gate_fail" = "0" ] || { echo "[!] 配置硬校验失败，终止构建（避免产出空壳包）"; exit 1; }
+echo "    [ok] KSU/SUSFS 配置校验通过"
+
 build_kernel() {
   make $MK O="$OUT" ARCH=arm64 -j"$(nproc)" 2>&1 | tee "$BASE/build.log"
 }
@@ -366,6 +448,38 @@ IMG="$OUT/arch/arm64/boot/Image.gz-dtb"
 [ -f "$IMG" ] || IMG="$OUT/arch/arm64/boot/Image.gz"
 [ -f "$IMG" ] || IMG="$OUT/arch/arm64/boot/Image"
 echo "==> 产物: $IMG (WITH_SUSFS=$WITH_SUSFS)"
+
+# ============================================================================
+#  7b. 【硬闸门】对最终镜像做「二进制取证」，确认 KSU/SUSFS 真的在里面
+#  解压 Image.gz-dtb 后统计 KernelSU / susfs 字符串。注意不能直接 grep "ksu"，
+#  因为内核里大量 "checksum" 含子串 ksu（实测 169 处），会造成假阳性。
+# ============================================================================
+echo "==> 7b. 产物二进制取证（KSU/SUSFS 字符串）"
+# 注意：workflow 以 `bash -e` 运行，若直接让 python 非零退出会立刻中止、来不及打印提示，
+# 故用 if ! ... 包裹，保证失败原因能出现在日志里。
+if ! IMG_PATH="$IMG" WITH_KSU="$WITH_KSU" WITH_SUSFS="$WITH_SUSFS" python3 - <<'PY'
+import os, re, sys, zlib
+p = os.environ["IMG_PATH"]
+data = open(p, "rb").read()
+i = data.find(b"\x1f\x8b\x08")
+raw = zlib.decompressobj(31).decompress(data[i:]) if i >= 0 else data
+m = re.search(rb"Linux version [0-9][^\x00]{0,120}", raw)
+print("    内核版本:", m.group().decode("utf-8", "replace") if m else "(未找到)")
+n_ksu   = raw.count(b"KernelSU")
+n_susfs = raw.lower().count(b"susfs")
+print(f"    KernelSU 字符串={n_ksu}  susfs 字符串={n_susfs}")
+bad = 0
+if os.environ["WITH_KSU"] == "1" and n_ksu == 0:
+    print("[!] 致命：镜像内找不到 KernelSU，编出的是空壳内核"); bad = 1
+if os.environ["WITH_SUSFS"] == "1" and n_susfs == 0:
+    print("[!] 致命：镜像内找不到 susfs"); bad = 1
+sys.exit(bad)
+PY
+then
+  echo "[!] 产物取证失败，终止（不打包空壳包）"
+  exit 1
+fi
+echo "    [ok] 产物取证通过"
 
 echo "==> 8. 打包 AnyKernel3"
 mkdir -p "$BASE/ak3"
