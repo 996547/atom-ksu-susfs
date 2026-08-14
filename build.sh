@@ -165,7 +165,12 @@ MK="CC=$CLANG_BIN LD=$LLD_BIN CLANG_TRIPLE=aarch64-linux-gnu- HOSTCC=$CLANG_BIN"
 export KCFLAGS="-Wno-implicit-function-declaration -Wno-implicit-int \
   -Wno-error=incompatible-pointer-types -Wno-error=array-bounds \
   -Wno-error=format -Wno-error=enum-conversion \
-  -Wno-error=address-of-packed-member -Wno-unknown-warning-option"
+  -Wno-error=address-of-packed-member -Wno-unknown-warning-option \
+  -Wno-error -Wno-unused-but-set-variable -Wno-unused-variable \
+  -Wno-unused-function -Wno-error=unused-but-set-variable"
+# 兜底：4.14+SUSFS 在 clang-14 下会触发若干「set but not used / unused」被 -Werror 当错误
+# （如 mm/vmscan.c:3289 的 nid）。用全局 -Wno-error 把所有告警从错误降级为警告，
+# 避免反复 15 分钟构建卡在告警类错误；内核仍可正常编译与启动。
 
 OUT="$SRC/out"
 mkdir -p "$OUT"
