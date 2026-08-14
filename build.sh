@@ -66,6 +66,23 @@ dl "https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64
 tar -xzf gcc.tar.gz
 GCC="$BASE/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9-lineage-19.1"
 
+# ---------- 修复 clang 汇编器查找：CLANG_TRIPLE=gnu 但 GCC 工具链是 android ----------
+# 内核 Makefile 用 GCC_TOOLCHAIN_DIR(=$GCC/bin) 作 --prefix，clang 按 target
+# (aarch64-linux-gnu) 去找 aarch64-linux-gnu-as；但 GCC 4.9 预编译只提供
+# aarch64-linux-android-as，找不到就回退宿主 /usr/bin/as(x86)，遇到 -EL 直接报错
+# （典型症状：CC scripts/mod/empty.o -> /usr/bin/as: unrecognized option '-EL'）。
+# 建立 gnu 三元组 -> android 三元组的符号链接，让外部 GNU as 被正确找到（-EL 即可识别），
+# .S 文件也继续走真正的交叉 GNU as，与 4.14.336 成功编译条件一致。
+echo "==> 2b. 建立 aarch64-linux-gnu-* -> aarch64-linux-android-* 符号链接"
+export PATH="$GCC/bin:$PATH"
+for b in "$GCC"/bin/aarch64-linux-android-*; do
+  [ -e "$b" ] || continue
+  base=$(basename "$b")
+  gnu=${base/aarch64-linux-android-/aarch64-linux-gnu-}
+  if [ ! -e "$GCC/bin/$gnu" ]; then ln -sf "$base" "$GCC/bin/$gnu"; fi
+done
+ls -l "$GCC"/bin/aarch64-linux-gnu-as 2>/dev/null || echo "    [警告] gnu-as 链接未生成，构建可能仍报 -EL"
+
 echo "==> 3. SukiSU-Ultra (nongki) —— 来自本仓库附带的 susu.tar.gz"
 rm -rf "$SRC/KernelSU" "$BASE"/SukiSU-Ultra-*
 tar -xzf "$BASE/susu.tar.gz" -C "$BASE"
