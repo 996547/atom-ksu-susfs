@@ -70,10 +70,31 @@ jobs:
           tar -xzf clang.tar.gz -C "$HOME/clang"
           echo "$HOME/clang/bin" >> "$GITHUB_PATH"
 
-      - name: 集成 KernelSU (SukiSU-Ultra builtin 分支, 非 GKI 4.14)
+      - name: 集成 KernelSU (SukiSU-Ultra nongki, 来自本仓库 susu.tar.gz)
         run: |
           cd kernel
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/builtin/kernel/setup.sh" | bash -s builtin
+          rm -rf KernelSU
+          SU_SRC=$(tar -tzf ../action-repo/susu.tar.gz | head -1 | cut -d/ -f1)
+          tar -xzf ../action-repo/susu.tar.gz
+          mkdir -p KernelSU
+          cp -a "$SU_SRC/." KernelSU/
+          # 手动挂载进内核构建系统（nongki 不自带钩子，须显式挂）
+          rm -rf drivers/kernelsu
+          ln -sfn "../KernelSU/kernel" drivers/kernelsu
+          if ! grep -q 'kernelsu/' drivers/Makefile; then
+            printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          fi
+          if ! grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig; then
+            python3 - <<'PY'
+          import os
+          p = "drivers/Kconfig"
+          lines = open(p).read().splitlines(True)
+          idx = max(i for i, l in enumerate(lines) if l.strip() == "endmenu")
+          lines.insert(idx, 'source "drivers/kernelsu/Kconfig"\n')
+          open(p, "w").writelines(lines)
+          PY
+          fi
+          ls -l drivers/kernelsu/Makefile drivers/kernelsu/Kconfig
 
       - name: 应用 Clang 编译修复 (atom-sukisu 已验证配方)
         run: |
