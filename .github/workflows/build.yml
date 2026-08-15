@@ -58,12 +58,13 @@ jobs:
       - name: 修补公开树缺失的 MTK 厂商头文件 (缩减无法编译的专有子系统)
         run: |
           cd kernel
-          # 1) MMC inline-crypto 头: mtk_sd.h 用引号包含 "sw-cqhci-crypto.h" (兄弟相对),
-          #    该头实际在 ComboA/ 顶层, 而被编译的 mtk_sd.h 位于 ComboA/mt6873/ → 复制到子目录
-          if [ -f drivers/mmc/host/mediatek/ComboA/sw-cqhci-crypto.h ]; then
+          # 1) MMC: ComboA/ 顶层头 (sw-cqhci-crypto.h / msdc_reg.h 等) 被 ComboA/mt6873/mtk_sd.h
+          #    以引号包含 (兄弟相对解析到 ComboA/mt6873/). 批量 -n 复制顶层 .h 到 mt6873/,
+          #    只补缺的, 不覆盖平台专属文件 (如 mt6873/mtk_sd.h 自身)
+          if [ -d drivers/mmc/host/mediatek/ComboA ]; then
             mkdir -p drivers/mmc/host/mediatek/ComboA/mt6873
-            cp drivers/mmc/host/mediatek/ComboA/sw-cqhci-crypto.h \
-               drivers/mmc/host/mediatek/ComboA/mt6873/sw-cqhci-crypto.h
+            cp -n drivers/mmc/host/mediatek/ComboA/*.h \
+                  drivers/mmc/host/mediatek/ComboA/mt6873/ 2>/dev/null || true
           fi
           # 2) PPM v3 被 obj-$(CONFIG_MACH_MT6873) 强制编入, 但 mtk_ppm_platform.h 公开树缺失 → 剔除 MT6873
           sed -i 's|^obj-$(CONFIG_MACH_MT6873) += ppm_v3/|#obj-$(CONFIG_MACH_MT6873) += ppm_v3/|g' \
@@ -71,6 +72,11 @@ jobs:
           # 3) cameraisp 被 obj-y += cameraisp/ 无条件编入, met_events_camsys.h 公开树缺失 → 剔除
           sed -i 's|^obj-y += cameraisp/|#obj-y += cameraisp/|' \
             drivers/misc/mediatek/Makefile
+          # 4) SWPM 平台头 mtk_swpm_platform.h 在 mt6873 公开树缺失 (mt6885/mt6853/mt6785 有).
+          #    借用 mt6885 兄弟平台头 (SWPM 仅为功耗遥测, 非启动必需; 类型已核对匹配),
+          #    放到 -I 可解析的 include/swpm_v1/ (角度包含 <mtk_swpm_platform.h> 在此解析)
+          cp ../action-repo/flash/vendor-headers/mtk_swpm_platform.h \
+             drivers/misc/mediatek/base/power/include/swpm_v1/mtk_swpm_platform.h
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
         run: |
@@ -257,7 +263,7 @@ jobs:
           scripts/config --disable CONFIG_TOUCHSCREEN_FTS || true
           scripts/config --disable CONFIG_TOUCHSCREEN_FTS_FOD || true
           # 缩减公开树缺失厂商头文件的子系统
-          # SWPM: mtk_swpm_platform.h 公开树缺失 (已由 Makefile 剔除 swpm_v1 依赖 CONFIG_MTK_SWPM)
+          # SWPM: mtk_swpm_platform.h 公开树缺失, 已借用 mt6885 兄弟平台头补齐 (见修补步骤 4); 此处关 GPU_SWPM 降运行期风险
           scripts/config --disable CONFIG_MTK_SWPM || true
           scripts/config --disable CONFIG_MTK_GPU_SWPM_SUPPORT || true
           # 相机/CCU: 相关头 (met_events_camsys.h 等) 缺失, 已从父 Makefile 剔除 cameraisp; 一并关配置
