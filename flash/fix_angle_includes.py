@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""批量修复 Clang 严格性错误: 把 #include <foo.h> (头文件 foo.h 就在同一目录) 改成 #include "foo.h".
+"""批量修复 Clang 严格性 include 错误。
 
-MTK 4.14 内核树大量用尖括号引用同目录头文件, GCC 通过 -I. 容忍, Clang 报
-'file not found with <angled> include; use "quotes" instead'. 只处理纯文件名
-(无 '/') 且同目录真实存在的 include, 不动 <linux/...>/<asm/...> 等系统头.
+MTK 4.14 内核树在子目录里大量用尖括号引用相对路径头文件, 例如:
+  #include <idles/mt6873_mcusys.h>
+  #include <../../gpio/gpiolib.h>
+GCC 经 -I. 容忍, Clang 报
+  'xxx.h' file not found with <angled> include; use "quotes" instead
+
+本脚本把"目标文件真实存在于被包含文件所在目录的相对位置"的尖括号包含
+统一改成引号包含。规则:
+  - 绝对路径 (<linux/...>、<asm/...> 等系统头) 不动;
+  - 相对路径: 以被包含文件目录为基准解析, 若真实存在则改引号;
+  - 系统头 (linux/asm/uapi 等) 在树内无对应相对文件, 自然不会被转换。
 """
 import os, re, sys
 
@@ -13,8 +21,7 @@ total = 0
 for dirpath, dirs, files in os.walk(ROOT):
     if ".git" in dirs:
         dirs.remove(".git")
-    h_files = {f for f in files if f.endswith(".h")}
-    if not h_files:
+    if not any(f.endswith((".c", ".h")) for f in files):
         continue
     for fn in files:
         if not fn.endswith((".c", ".h")):
@@ -26,16 +33,11 @@ for dirpath, dirs, files in os.walk(ROOT):
             continue
         def repl(m):
             name = m.group(1)
-            if '/' not in name:
-                # 纯文件名: 仅当同目录真实存在时改引号 (原逻辑)
-                if name in h_files:
-                    return '#include "%s"' % name
-                return m.group(0)
-            # 相对路径尖括号包含 (如 <../../gpio/gpiolib.h>): Clang 要求改用引号
-            if name.startswith('.') or '..' in name:
-                cand = os.path.normpath(os.path.join(dirpath, name))
-                if os.path.isfile(cand):
-                    return '#include "%s"' % name
+            if name.startswith("/"):
+                return m.group(0)  # 绝对路径, 不动
+            cand = os.path.normpath(os.path.join(dirpath, name))
+            if os.path.isfile(cand):
+                return '#include "%s"' % name
             return m.group(0)
         new = INC_RE.sub(repl, text)
         if new != text:

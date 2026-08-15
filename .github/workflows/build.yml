@@ -79,6 +79,11 @@ jobs:
           #    Kconfig select 强制开启, 关 config 无效, 必须改 Makefile).
           sed -i 's|^obj-$(CONFIG_MTK_SWPM) += swpm_v1/|#obj-$(CONFIG_MTK_SWPM) += swpm_v1/|g' \
             drivers/misc/mediatek/base/power/Makefile
+          # 5) UFS: ufs-mtk-platform.h 位于子目录 mediatek/mt6873/, 用引号包含 "ufs.h"/"ufshcd.h",
+          #    但 UFS Makefile 的 -I 只指向 mediatek/mt6873 子目录本身, 父目录 drivers/scsi/ufs/
+          #    (ufs.h/ufshcd.h 实际所在) 未加入包含路径 → 补 -I 使引号包含可解析
+          sed -i '/drivers\/scsi\/ufs\/mediatek\//a ccflags-y += -I$(srctree)/drivers/scsi/ufs' \
+            drivers/scsi/ufs/Makefile
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
         run: |
