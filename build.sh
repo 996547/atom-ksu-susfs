@@ -43,11 +43,12 @@ dl() {  # url out
 # ---------- 工具链：Clang + lld（内核 build.config 指定 clang + ld.lld） ----------
 # 该 4.14.186 内核（atom 原厂树 kernel_redmi_atom）用 clang + ld.lld 编译；
 # GCC 4.9 太旧无法编译此内核。
-# 优先 clang-14（对 4.14 兼容性最佳，implicit-function-declaration 仍只是警告），
+# 优先 clang-11（与原厂内核 clang 11.0.1 / LLD 11.0.1 一致），规避 clang-14 对 4.14 arm64
+# 早期代码生成 PAC/BTI 分支保护指令导致 start_kernel 前同步异常（卡 Redmi logo 静默重启）。
 # 其次回退到系统 clang / clang-18。
 pick_clang() {
-  if command -v clang-14 >/dev/null 2>&1; then
-    CLANG_BIN=clang-14; LLD_BIN=ld.lld-14
+  if command -v clang-11 >/dev/null 2>&1; then
+    CLANG_BIN=clang-11; LLD_BIN=ld.lld-11
   elif command -v clang >/dev/null 2>&1; then
     CLANG_BIN=clang; LLD_BIN=ld.lld
   else

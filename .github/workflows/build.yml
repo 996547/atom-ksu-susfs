@@ -20,7 +20,8 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # ubuntu-22.04 的 universe 源稳定提供 clang-11，确保工具链版本可用
+    runs-on: ubuntu-22.04
     timeout-minutes: 240
     steps:
       - name: Checkout
@@ -29,11 +30,22 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          # clang-14 + lld-14 对该 4.14 内核兼容性最佳；若仓库不含 14 则回退到系统 clang/lld
           sudo apt-get install -y git curl zip bison flex make bc \
-            libssl-dev libncurses5-dev ccache \
-            clang-14 lld-14 llvm-14 || sudo apt-get install -y clang lld llvm
-          clang --version 2>/dev/null | head -1 || clang-14 --version | head -1
+            libssl-dev libncurses5-dev ccache wget lsb-release
+          # 关键：原厂内核由 clang 11.0.1 / LLD 11.0.1 编译。之前用 clang-14 会导致 4.14 arm64
+          # 早期代码生成 PAC/BTI 分支保护指令，在 start_kernel 之前就同步异常 -> 卡 Redmi logo 静默重启。
+          # 统一切到与原厂一致的 clang-11 / lld-11，规避该问题。
+          # 优先从 Ubuntu universe 装；失败则从 LLVM 官方源装。
+          if ! sudo apt-get install -y clang-11 lld-11 llvm-11; then
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc >/dev/null
+            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-11 main" | sudo tee /etc/apt/sources.list.d/llvm11.list
+            sudo apt-get update || true
+            sudo apt-get install -y clang-11 lld-11 llvm-11
+          fi
+          # 建软链，确保 build.sh 优先解析到 clang-11 / ld.lld-11
+          sudo ln -sf /usr/bin/clang-11 /usr/bin/clang
+          sudo ln -sf /usr/bin/ld.lld-11 /usr/bin/ld.lld
+          clang --version 2>/dev/null | head -1 || clang-11 --version | head -1
 
       - name: Build kernel
         env:
