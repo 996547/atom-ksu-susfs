@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       KERNEL_BRANCH:
-        description: '内核源码分支 (MiCode)'
+        description: '内核源码分支 (mt6873-dev/android_kernel_xiaomi_mt6885)'
         required: true
-        default: 'cezanne-r-oss'
+        default: 'cgroup-v2'
       VENDOR_BRANCH:
         description: 'MTK_kernel_modules 分支'
         required: true
@@ -14,7 +14,7 @@ on:
       DEFCONFIG:
         description: 'Defconfig (相对 arch/arm64/configs/)'
         required: true
-        default: 'atom_user_defconfig'
+        default: 'vendor/atom_user_defconfig'
       WITH_SUSFS:
         description: '是否包含 SUSFS'
         required: true
@@ -49,17 +49,11 @@ jobs:
           sudo apt-get install -y bc bison flex libssl-dev make git curl zip \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3
 
-      - name: 克隆内核源码 (MiCode cezanne-r-oss, atom/MT6875 官方 4.14.186，含完整 MTK 厂商驱动)
+      - name: 克隆内核源码 (mt6873-dev/android_kernel_xiaomi_mt6885 @ cgroup-v2, 完整 atom/MT6873 树 + SukiSU 子模块, clang r383902)
         run: |
           git clone --single-branch --depth=1 \
-            --branch "${{ github.event.inputs.KERNEL_BRANCH || 'cezanne-r-oss' }}" \
-            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
-
-      - name: 克隆 MTK kernel_modules (WLAN/BT/GPS 驱动, 同级 vendor/)
-        run: |
-          git clone --single-branch --depth=1 \
-            --branch "${{ github.event.inputs.VENDOR_BRANCH || 'cezanne-r-oss' }}" \
-            https://github.com/MiCode/MTK_kernel_modules.git vendor
+            --branch "${{ github.event.inputs.KERNEL_BRANCH || 'cgroup-v2' }}" \
+            https://github.com/mt6873-dev/android_kernel_xiaomi_mt6885.git kernel
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
         run: |
@@ -101,14 +95,17 @@ jobs:
           cd kernel
           # 1) 顶层 Makefile 497 行: 注释 -no-integrated-as, 改用 integrated assembler
           sed -i 's/-no-integrated-as/#-no-integrated-as/' Makefile
-          # 2) vdso gettimeofday.S: 去掉 clock_gettime_return 后的逗号 (3 处 call site)
-          sed -i 's/clock_gettime_return, shift=1/clock_gettime_return shift=1/g' arch/arm64/kernel/vdso/gettimeofday.S
-          # 3) connectivity Makefile: unlink -> rm -rf, ln -s -> ln -snf
-          sed -i 's/$(shell unlink/$(shell rm -rf/g; s/ln -s /ln -snf /g' drivers/misc/mediatek/connectivity/Makefile
+          # 2) vdso gettimeofday.S: 去掉 clock_gettime_return 后的逗号 (3 处 call site, 缺失则跳过)
+          [ -f arch/arm64/kernel/vdso/gettimeofday.S ] && \
+            sed -i 's/clock_gettime_return, shift=1/clock_gettime_return shift=1/g' arch/arm64/kernel/vdso/gettimeofday.S || true
+          # 3) connectivity Makefile: unlink -> rm -rf, ln -s -> ln -snf (mt6873-dev 布局可能不同, 缺失则跳过)
+          [ -f drivers/misc/mediatek/connectivity/Makefile ] && \
+            sed -i 's/$(shell unlink/$(shell rm -rf/g; s/ln -s /ln -snf /g' drivers/misc/mediatek/connectivity/Makefile || true
           # 4) AES 汇编补丁
           python3 ../action-repo/flash/patch_aes.py
-          # 5) cpuidle-mediatek.c: 同目录头文件改引号
-          sed -i 's|#include <dt_idle_states.h>|#include "dt_idle_states.h"|' drivers/cpuidle/cpuidle-mediatek.c
+          # 5) cpuidle-mediatek.c: 同目录头文件改引号 (缺失则跳过)
+          [ -f drivers/cpuidle/cpuidle-mediatek.c ] && \
+            sed -i 's|#include <dt_idle_states.h>|#include "dt_idle_states.h"|' drivers/cpuidle/cpuidle-mediatek.c || true
           # 6) 全局: 尖括号引用且同目录存在的本地头文件改引号
           python3 ../action-repo/flash/fix_angle_includes.py .
           # 7) MTK trace 头文件 TRACE_INCLUDE_PATH (Clang 兼容)
@@ -215,7 +212,7 @@ jobs:
           export LD=ld.lld
           make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            "${{ github.event.inputs.DEFCONFIG || 'atom_user_defconfig' }}"
+            "${{ github.event.inputs.DEFCONFIG || 'vendor/atom_user_defconfig' }}"
           # KernelSU 所需
           scripts/config --enable CONFIG_KSU
           scripts/config --enable CONFIG_KPROBES
