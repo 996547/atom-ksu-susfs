@@ -233,6 +233,58 @@ try:
 except Exception as e:
     print("    [警告] selinux 规则手动补入失败:", e)
 PY
+    # (e-2) 补 path_umount()：atom 4.14.186 厂商树未提供，但 fs/susfs.c 的
+    #     susfs_try_umount 需要它（链接期报 undefined symbol: path_umount）。
+    #     转发到树内静态 do_umount() 即可。
+    if grep -q "int path_umount(struct path \*path, int flags)" "$SRC/fs/namespace.c"; then
+      echo "    [跳过] path_umount 已存在"
+    else
+      cat >> "$SRC/fs/namespace.c" <<'EOF'
+
+#ifdef CONFIG_KSU_SUSFS
+/* SUSFS: fs/susfs.c::susfs_try_umount 调用 path_umount()，但 atom 4.14.186
+ * 厂商树未提供该函数（仅有静态 do_umount）。补一个 wrapper 转发到 do_umount。 */
+int path_umount(struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+	return do_umount(mnt, flags);
+}
+EXPORT_SYMBOL(path_umount);
+#endif
+EOF
+      echo "    [ok] path_umount() 已补入 fs/namespace.c"
+    fi
+    # (e-3) 手动补 faccessat 的 SUS_PATH 钩子（上游 50 补丁此 hunk 因 atom 树
+    #     faccessat 上下文不同被 reject，导致 SUS_PATH 经 faccessat 不生效）
+    SRC="$SRC" python3 - <<'PY2' 2>/dev/null || echo "    [警告] faccessat SUS_PATH 钩子补入失败"
+import os, re
+p = os.path.join(os.environ["SRC"], "fs/open.c")
+s = open(p).read()
+m = re.search(r'SYSCALL_DEFINE3\(faccessat.*?\n\{\n(.*?)\n\}', s, re.S)
+if m:
+    fn = m.group(0)
+    if 'susfs_sus_path_by_filename' not in fn:
+        fn2 = fn.replace('unsigned int lookup_flags = LOOKUP_FOLLOW;\n',
+            'unsigned int lookup_flags = LOOKUP_FOLLOW;\n'
+            '#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n'
+            '\tstruct filename* fname;\n'
+            '\tint status;\n'
+            '\tint error;\n'
+            '\tfname = getname_safe(filename);\n'
+            '\tstatus = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_ALL_ENOENT);\n'
+            '\tputname_safe(fname);\n'
+            '\tif (status) {\n'
+            '\t\treturn error;\n'
+            '\t}\n'
+            '#endif\n', 1)
+        s = s[:m.start()] + fn2 + s[m.end():]
+        open(p, "w").write(s)
+        print("    [ok] faccessat SUS_PATH 钩子已补入")
+    else:
+        print("    [跳过] faccessat 已有 SUS_PATH 钩子")
+else:
+    print("    [警告] 未找到 faccessat 函数")
+PY2
     # (e) 校验
     if [ -f "$SRC/fs/susfs.c" ] && [ -f "$SRC/include/linux/susfs.h" ] && grep -q "config KSU_SUSFS" "$SRC/KernelSU/kernel/Kconfig" 2>/dev/null; then
       echo "    SUSFS 已接入 (fs/susfs.c + include/linux/susfs.h + CONFIG_KSU_SUSFS)"
@@ -430,18 +482,7 @@ build_kernel() {
 
 echo "==> 7. 开始编译 ..."
 if ! build_kernel; then
-  if [ "$WITH_SUSFS" = "1" ]; then
-    echo "[!] 带 SUSFS 编译失败，自动回退为仅 KernelSU 重建 ..."
-    WITH_SUSFS=0
-    ./scripts/config --file "$OUT/.config" -d CONFIG_KSU_SUSFS
-    make $MK O="$OUT" ARCH=arm64 olddefconfig
-    rm -rf "$OUT/drivers/kernelsu" "$OUT/arch/arm64/boot"
-    if ! build_kernel; then
-      echo "[!] 编译失败，最后 80 行日志："; tail -80 "$BASE/build.log"; exit 1
-    fi
-  else
-    echo "[!] 编译失败，最后 80 行日志："; tail -80 "$BASE/build.log"; exit 1
-  fi
+  echo "[!] 编译失败，最后 80 行日志："; tail -80 "$BASE/build.log"; exit 1
 fi
 
 IMG="$OUT/arch/arm64/boot/Image.gz-dtb"
@@ -457,7 +498,7 @@ echo "==> 产物: $IMG (WITH_SUSFS=$WITH_SUSFS)"
 echo "==> 7b. 产物二进制取证（KSU/SUSFS 字符串）"
 # 注意：workflow 以 `bash -e` 运行，若直接让 python 非零退出会立刻中止、来不及打印提示，
 # 故用 if ! ... 包裹，保证失败原因能出现在日志里。
-if ! IMG_PATH="$IMG" WITH_KSU="$WITH_KSU" WITH_SUSFS="$WITH_SUSFS" python3 - <<'PY'
+if ! IMG_PATH="$IMG" OUT="$OUT" WITH_KSU="$WITH_KSU" WITH_SUSFS="$WITH_SUSFS" python3 - <<'PY'
 import os, re, sys, zlib
 p = os.environ["IMG_PATH"]
 data = open(p, "rb").read()
@@ -468,11 +509,22 @@ print("    内核版本:", m.group().decode("utf-8", "replace") if m else "(未�
 n_ksu   = raw.count(b"KernelSU")
 n_susfs = raw.lower().count(b"susfs")
 print(f"    KernelSU 字符串={n_ksu}  susfs 字符串={n_susfs}")
+# 同时以 .config 为准：即便 WITH_SUSFS 环境变量被意外复位，只要配置了
+# CONFIG_KSU_SUSFS=y，镜像就必须含 susfs 字符串，否则判定为空壳。
+need_ksu, need_susfs = False, False
+try:
+    cfg = open(os.environ["OUT"] + "/.config").read()
+except Exception:
+    cfg = ""
+if os.environ["WITH_KSU"] == "1" or "CONFIG_KSU=y" in cfg:
+    need_ksu = True
+if os.environ["WITH_SUSFS"] == "1" or "CONFIG_KSU_SUSFS=y" in cfg:
+    need_susfs = True
 bad = 0
-if os.environ["WITH_KSU"] == "1" and n_ksu == 0:
+if need_ksu and n_ksu == 0:
     print("[!] 致命：镜像内找不到 KernelSU，编出的是空壳内核"); bad = 1
-if os.environ["WITH_SUSFS"] == "1" and n_susfs == 0:
-    print("[!] 致命：镜像内找不到 susfs"); bad = 1
+if need_susfs and n_susfs == 0:
+    print("[!] 致命：镜像内找不到 susfs（SUSFS 未真正编入）"); bad = 1
 sys.exit(bad)
 PY
 then
