@@ -84,6 +84,17 @@ jobs:
           #    (ufs.h/ufshcd.h 实际所在) 未加入包含路径 → 补 -I 使引号包含可解析
           sed -i '/drivers\/scsi\/ufs\/mediatek\//a ccflags-y += -I$(srctree)/drivers/scsi/ufs' \
             drivers/scsi/ufs/Makefile
+          # 6) SELinux: 顶层 security/selinux/symtab.h 用引号包含 "hashtab.h",
+          #    但 hashtab.h 实际在 ss/ 子目录 (security/selinux/ss/hashtab.h) → 顶层找不到.
+          #    在 security/selinux/ 建符号链接 hashtab.h -> ss/hashtab.h (同名文件不存在时才建, 不覆盖).
+          if [ -f security/selinux/ss/hashtab.h ] && [ ! -e security/selinux/hashtab.h ]; then
+            ln -snf ss/hashtab.h security/selinux/hashtab.h
+          fi
+          #    同理: 若顶层 security/selinux/symtab.h 缺失(实际在 ss/), 建符号链接指向 ss/ 版本
+          #    (ss/symtab.h 自身的 "hashtab.h" 包含可在 ss/ 内解析, 故一并修好)
+          if [ -f security/selinux/ss/symtab.h ] && [ ! -e security/selinux/symtab.h ]; then
+            ln -snf ss/symtab.h security/selinux/symtab.h
+          fi
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
         run: |
