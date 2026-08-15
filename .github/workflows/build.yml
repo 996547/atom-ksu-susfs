@@ -1,62 +1,270 @@
-name: Build atom KSU + SUSFS
+name: Build atom KernelSU + SUSFS (cezanne-r-oss + WLAN)
 
 on:
   workflow_dispatch:
     inputs:
-      with_susfs:
-        description: 'Include SUSFS (uncheck for KernelSU-only build)'
-        type: boolean
-        default: true
-      with_ksu:
-        description: 'Include KernelSU (uncheck for base-kernel-only / isolation test)'
-        type: boolean
-        default: true
-      with_pstore:
-        description: 'Enable pstore/ramoops to capture bootloop kernel panic log (debug only)'
-        type: boolean
-        default: false
+      KERNEL_BRANCH:
+        description: '内核源码分支 (MiCode)'
+        required: true
+        default: 'cezanne-r-oss'
+      VENDOR_BRANCH:
+        description: 'MTK_kernel_modules 分支'
+        required: true
+        default: 'cezanne-r-oss'
+      DEFCONFIG:
+        description: 'Defconfig (相对 arch/arm64/configs/)'
+        required: true
+        default: 'atom_user_defconfig'
+      WITH_SUSFS:
+        description: '是否包含 SUSFS'
+        required: true
+        default: 'true'
+      WITH_KSU:
+        description: '是否包含 KernelSU'
+        required: true
+        default: 'true'
+      WITH_PSTORE:
+        description: '是否开启 pstore/ramoops (取证崩溃日志)'
+        required: true
+        default: 'true'
   push:
     branches: [ main, master ]
 
+permissions:
+  contents: write
+
 jobs:
   build:
-    # ubuntu-22.04 的 universe 源稳定提供 clang-11，确保工具链版本可用
-    runs-on: ubuntu-22.04
-    timeout-minutes: 240
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
     steps:
-      - name: Checkout
+      - name: Checkout 本仓库 (取 ak3/ anykernel.sh + flash/ 修复脚本 + susu.tar.gz)
         uses: actions/checkout@v4
+        with:
+          path: action-repo
 
-      - name: Install build dependencies
+      - name: 安装编译依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y git curl zip bison flex make bc \
-            libssl-dev libncurses5-dev ccache wget lsb-release
-          # 关键：原厂内核由 clang 11.0.1 / LLD 11.0.1 编译。之前用 clang-14 会导致 4.14 arm64
-          # 早期代码生成 PAC/BTI 分支保护指令，在 start_kernel 之前就同步异常 -> 卡 Redmi logo 静默重启。
-          # 统一切到与原厂一致的 clang-11 / lld-11，规避该问题。
-          # 优先从 Ubuntu universe 装；失败则从 LLVM 官方源装。
-          if ! sudo apt-get install -y clang-11 lld-11 llvm-11; then
-            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc >/dev/null
-            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-11 main" | sudo tee /etc/apt/sources.list.d/llvm11.list
-            sudo apt-get update || true
-            sudo apt-get install -y clang-11 lld-11 llvm-11
+          sudo apt-get install -y bc bison flex libssl-dev make git curl zip \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3
+
+      - name: 克隆内核源码 (MiCode cezanne-r-oss, atom/MT6875 官方 4.14.186，含完整 MTK 厂商驱动)
+        run: |
+          git clone --single-branch --depth=1 \
+            --branch "${{ github.event.inputs.KERNEL_BRANCH || 'cezanne-r-oss' }}" \
+            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
+
+      - name: 克隆 MTK kernel_modules (WLAN/BT/GPS 驱动, 同级 vendor/)
+        run: |
+          git clone --single-branch --depth=1 \
+            --branch "${{ github.event.inputs.VENDOR_BRANCH || 'cezanne-r-oss' }}" \
+            https://github.com/MiCode/MTK_kernel_modules.git vendor
+
+      - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
+        run: |
+          mkdir -p "$HOME/clang"
+          curl -L --max-time 300 \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android11-release/clang-r383902.tar.gz" \
+            -o clang.tar.gz
+          tar -xzf clang.tar.gz -C "$HOME/clang"
+          echo "$HOME/clang/bin" >> "$GITHUB_PATH"
+
+      - name: 集成 KernelSU (SukiSU-Ultra builtin 分支, 非 GKI 4.14)
+        run: |
+          cd kernel
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/builtin/kernel/setup.sh" | bash -s builtin
+
+      - name: 应用 Clang 编译修复 (atom-sukisu 已验证配方)
+        run: |
+          cd kernel
+          # 1) 顶层 Makefile 497 行: 注释 -no-integrated-as, 改用 integrated assembler
+          sed -i 's/-no-integrated-as/#-no-integrated-as/' Makefile
+          # 2) vdso gettimeofday.S: 去掉 clock_gettime_return 后的逗号 (3 处 call site)
+          sed -i 's/clock_gettime_return, shift=1/clock_gettime_return shift=1/g' arch/arm64/kernel/vdso/gettimeofday.S
+          # 3) connectivity Makefile: unlink -> rm -rf, ln -s -> ln -snf
+          sed -i 's/$(shell unlink/$(shell rm -rf/g; s/ln -s /ln -snf /g' drivers/misc/mediatek/connectivity/Makefile
+          # 4) AES 汇编补丁
+          python3 ../action-repo/flash/patch_aes.py
+          # 5) cpuidle-mediatek.c: 同目录头文件改引号
+          sed -i 's|#include <dt_idle_states.h>|#include "dt_idle_states.h"|' drivers/cpuidle/cpuidle-mediatek.c
+          # 6) 全局: 尖括号引用且同目录存在的本地头文件改引号
+          python3 ../action-repo/flash/fix_angle_includes.py .
+          # 7) MTK trace 头文件 TRACE_INCLUDE_PATH (Clang 兼容)
+          python3 ../action-repo/flash/fix_trace_include_path.py .
+          # 8) 缺失厂商固件打桩
+          python3 ../action-repo/flash/stub_missing_firmware.py .
+          # 9) 缺失引号头文件自动解析 (mt_iommu.h 等)
+          python3 ../action-repo/flash/fix_missing_quote_includes.py .
+          # 10) SukiSU syscall_fn_t 在 arm64 上未定义
+          python3 ../action-repo/flash/fix_sukisu_syscall_fn_t.py .
+          # 11) 4.14 缺 MODULE_IMPORT_NS 宏
+          python3 ../action-repo/flash/fix_module_import_ns.py .
+          # 12) 4.14 KSU 通用适配 (pgtable.h / ksys_ / strncpy_from_user_nofault)
+          python3 ../action-repo/flash/fix_ksu_414_generic.py .
+          # 13) lsm_hook.c 在 4.14 的适配 (hlist -> list_head)
+          python3 ../action-repo/flash/fix_lsm_hook_414.py .
+
+      - name: 集成 SUSFS (gitlab.com/simonpunk/susfs4ksu)
+        if: ${{ github.event.inputs.WITH_SUSFS != 'false' }}
+        run: |
+          cd kernel
+          git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs_src
+          KP="../susfs_src/kernel_patches"
+          # (a) 拷贝 SUSFS 核心源文件
+          cp -a "$KP/fs/susfs.c"            fs/susfs.c            2>/dev/null || echo "[W] copy fs/susfs.c failed"
+          cp -a "$KP/include/linux/susfs.h" include/linux/susfs.h 2>/dev/null || echo "[W] copy susfs.h failed"
+          # (b) 内核侧补丁：VFS 钩子 + fs/Makefile 条目
+          patch -p1 --forward < "$KP/50_add_susfs_in_kernel-4.14.patch" 2>&1 | grep -iE "fail|rej" || true
+          # (c) KernelSU 侧补丁
+          patch -p1 --forward -d KernelSU < "$KP/KernelSU/10_enable_susfs_for_ksu.patch" 2>&1 | grep -iE "fail|rej" || true
+          # (d) 消除 kernel_compat.h 宏与函数同名冲突
+          sed -i -E 's/^(\s*)(int ksu_access_ok\(const void \*addr, unsigned long size\) \{)/\1#undef ksu_access_ok\n\1\2/' \
+            KernelSU/kernel/kernel_compat.c
+          # (e) 手动补 selinux/rules.c 的 zygote unmount 规则 (SUSFS try_umount 所需)
+          python3 - <<'PY' 2>/dev/null || true
+          p = "KernelSU/kernel/selinux/rules.c"
+          try:
+              s = open(p).read()
+              if "labeledfs" not in s:
+                  anchor = 'ksu_allow(db, "system_server", KERNEL_SU_DOMAIN, "process", "sigkill");'
+                  ins = anchor + "\n\n#ifdef CONFIG_KSU_SUSFS\n\tksu_allow(db, \"zygote\", \"labeledfs\", \"filesystem\", \"unmount\");\n#endif\n"
+                  s = s.replace(anchor, ins, 1)
+                  open(p, "w").write(s)
+                  print("    [ok] selinux SUSFS 规则已补入")
+          except Exception as e:
+              print("    [W] selinux 规则补入失败:", e)
+          PY
+          # (f) 补 path_umount()：atom 4.14.186 厂商树未提供，fs/susfs.c 需要
+          if grep -q "int path_umount(struct path \*path, int flags)" fs/namespace.c; then
+            echo "    [skip] path_umount 已存在"
+          else
+            cat >> fs/namespace.c <<'EOF'
+
+          #ifdef CONFIG_KSU_SUSFS
+          int path_umount(struct path *path, int flags)
+          {
+          	struct mount *mnt = real_mount(path->mnt);
+          	return do_umount(mnt, flags);
+          }
+          EXPORT_SYMBOL(path_umount);
+          #endif
+          EOF
+            echo "    [ok] path_umount() 已补入 fs/namespace.c"
           fi
-          # 建软链，确保 build.sh 优先解析到 clang-11 / ld.lld-11
-          sudo ln -sf /usr/bin/clang-11 /usr/bin/clang
-          sudo ln -sf /usr/bin/ld.lld-11 /usr/bin/ld.lld
-          clang --version 2>/dev/null | head -1 || clang-11 --version | head -1
+          # (g) 手动补 faccessat 的 SUS_PATH 钩子
+          python3 - <<'PY2' 2>/dev/null || echo "    [W] faccessat SUS_PATH 钩子补入失败"
+          import re
+          p = "fs/open.c"
+          s = open(p).read()
+          m = re.search(r'SYSCALL_DEFINE3\(faccessat.*?\n\{\n(.*?)\n\}', s, re.S)
+          if m:
+              fn = m.group(0)
+              if 'susfs_sus_path_by_filename' not in fn:
+                  fn2 = fn.replace('unsigned int lookup_flags = LOOKUP_FOLLOW;\n',
+                      'unsigned int lookup_flags = LOOKUP_FOLLOW;\n'
+                      '#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n'
+                      '\tstruct filename* fname;\n'
+                      '\tint status;\n'
+                      '\tint error;\n'
+                      '\tfname = getname_safe(filename);\n'
+                      '\tstatus = susfs_sus_path_by_filename(fname, &error, SYSCALL_FAMILY_ALL_ENOENT);\n'
+                      '\tputname_safe(fname);\n'
+                      '\tif (status) {\n'
+                      '\t\treturn error;\n'
+                      '\t}\n'
+                      '#endif\n', 1)
+                  s = s[:m.start()] + fn2 + s[m.end():]
+                  open(p, "w").write(s)
+                  print("    [ok] faccessat SUS_PATH 钩子已补入")
+              else:
+                  print("    [skip] faccessat 已有 SUS_PATH 钩子")
+          else:
+              print("    [W] 未找到 faccessat 函数")
+          PY2
 
-      - name: Build kernel
-        env:
-          WITH_SUSFS: ${{ github.event.inputs.with_susfs }}
-          WITH_KSU: ${{ github.event.inputs.with_ksu }}
-          WITH_PSTORE: ${{ github.event.inputs.with_pstore }}
-        run: bash build.sh
+      - name: 生成 defconfig 并开启 KSU / SUSFS / 关闭 APPENDED_DTB
+        run: |
+          cd kernel
+          export ARCH=arm64
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export CC=clang
+          export LD=ld.lld
+          make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            "${{ github.event.inputs.DEFCONFIG || 'atom_user_defconfig' }}"
+          # KernelSU 所需
+          scripts/config --enable CONFIG_KSU
+          scripts/config --enable CONFIG_KPROBES
+          scripts/config --enable CONFIG_KALLSYMS
+          scripts/config --enable CONFIG_KALLSYMS_ALL
+          # SUSFS (默认开)
+          if [ "${{ github.event.inputs.WITH_SUSFS }}" != "false" ]; then
+            scripts/config --enable CONFIG_KSU_SUSFS
+            scripts/config --enable CONFIG_KSU_SUSFS_SUS_PATH
+            scripts/config --enable CONFIG_KSU_SUSFS_SUS_MOUNT
+            scripts/config --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT
+          else
+            scripts/config --disable CONFIG_KSU_SUSFS || true
+          fi
+          # pstore/ramoops (取证用, 默认开)
+          if [ "${{ github.event.inputs.WITH_PSTORE }}" != "false" ]; then
+            scripts/config --enable CONFIG_PSTORE
+            scripts/config --enable CONFIG_PSTORE_RAM
+          fi
+          # 关闭 STRONG stack-protector (Clang 兼容)
+          scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG || true
+          # 关键: 关闭 appended DTB, 产出纯 Image.gz (设备用 dtbo 分区提供 DTB)
+          scripts/config --disable CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE
+          # 禁用 FTS/FocalTech 触摸驱动 (厂商私有固件 blob 缺失); 实机固件由 vendor 分区加载
+          scripts/config --disable CONFIG_TOUCHSCREEN_FTS || true
+          scripts/config --disable CONFIG_TOUCHSCREEN_FTS_FOD || true
+          make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
 
-      - name: Upload AnyKernel3 zip
+      - name: 编译内核 (纯 Image.gz, KSU+SUSFS 已内建)
+        run: |
+          cd kernel
+          export ARCH=arm64
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export CC=clang
+          export LD=ld.lld
+          make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            Image.gz -j"$(nproc)"
+
+      - name: 校验产物 Image.gz (纯内核, 无 appended DTB) + KSU/SUSFS 是否存在
+        run: |
+          cd kernel
+          ls -lh arch/arm64/boot/Image.gz
+          python3 - <<'PY'
+          import gzip
+          data = open('arch/arm64/boot/Image.gz','rb').read()
+          raw = gzip.decompress(data)
+          print("decompressed kernel size:", len(raw))
+          print("appended DTB present:", b'\xd0\x0d\xfe\xed' in raw)
+          print("KernelSU strings:", raw.count(b'KernelSU'))
+          print("susfs strings:", raw.lower().count(b'susfs'))
+          assert raw.count(b'KernelSU') > 0, "KernelSU NOT compiled in!"
+          PY
+
+      - name: 打包 AnyKernel3 (纯 Image.gz, 保留设备 ramdisk/dtbo)
+        run: |
+          ZIPNAME="atom-ksu-susfs-AnyKernel3.zip"
+          rm -rf AK3 && mkdir -p AK3
+          cp action-repo/ak3/anykernel.sh AK3/anykernel.sh
+          cp action-repo/ak3/META-INF AK3/ -r
+          cp action-repo/ak3/tools AK3/ -r
+          cp kernel/arch/arm64/boot/Image.gz AK3/Image.gz
+          cd AK3 && zip -r "../$ZIPNAME" . -x '*.git*'
+          echo "ZIPNAME=$ZIPNAME" >> "$GITHUB_ENV"
+
+      - name: 上传构建产物 (供 monitor 脚本下载)
         uses: actions/upload-artifact@v4
         with:
           name: atom-ksu-susfs-AnyKernel3
           path: atom-ksu-susfs-AnyKernel3.zip
-          if-no-files-found: error
