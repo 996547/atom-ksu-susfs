@@ -72,11 +72,13 @@ jobs:
           # 3) cameraisp 被 obj-y += cameraisp/ 无条件编入, met_events_camsys.h 公开树缺失 → 剔除
           sed -i 's|^obj-y += cameraisp/|#obj-y += cameraisp/|' \
             drivers/misc/mediatek/Makefile
-          # 4) SWPM 平台头 mtk_swpm_platform.h 在 mt6873 公开树缺失 (mt6885/mt6853/mt6785 有).
-          #    借用 mt6885 兄弟平台头 (SWPM 仅为功耗遥测, 非启动必需; 类型已核对匹配),
-          #    放到 -I 可解析的 include/swpm_v1/ (角度包含 <mtk_swpm_platform.h> 在此解析)
-          cp ../action-repo/flash/vendor-headers/mtk_swpm_platform.h \
-             drivers/misc/mediatek/base/power/include/swpm_v1/mtk_swpm_platform.h
+          # 4) SWPM: mt6873 公开树缺失 mtk_swpm_platform.h, 且兄弟平台(mt6885)头与 mt6873 的
+          #    mtk_swpm_platform.c 枚举/结构体尺寸不兼容 (DDR_2133、bw 数组 12 元素等),
+          #    无法借用 → 整体剔除 swpm_v1 (SWPM 仅为功耗遥测/调试, 非启动必需).
+          #    其父 Makefile 用 obj-$(CONFIG_MTK_SWPM) 门控, 注释即跳过 (CONFIG_MTK_SWPM 被
+          #    Kconfig select 强制开启, 关 config 无效, 必须改 Makefile).
+          sed -i 's|^obj-$(CONFIG_MTK_SWPM) += swpm_v1/|#obj-$(CONFIG_MTK_SWPM) += swpm_v1/|g' \
+            drivers/misc/mediatek/base/power/Makefile
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
         run: |
@@ -263,7 +265,7 @@ jobs:
           scripts/config --disable CONFIG_TOUCHSCREEN_FTS || true
           scripts/config --disable CONFIG_TOUCHSCREEN_FTS_FOD || true
           # 缩减公开树缺失厂商头文件的子系统
-          # SWPM: mtk_swpm_platform.h 公开树缺失, 已借用 mt6885 兄弟平台头补齐 (见修补步骤 4); 此处关 GPU_SWPM 降运行期风险
+          # SWPM: 已在修补步骤 4 整体剔除 swpm_v1 (mt6873 公开树缺平台头且兄弟头不兼容); 此处关 GPU_SWPM 降运行期风险
           scripts/config --disable CONFIG_MTK_SWPM || true
           scripts/config --disable CONFIG_MTK_GPU_SWPM_SUPPORT || true
           # 相机/CCU: 相关头 (met_events_camsys.h 等) 缺失, 已从父 Makefile 剔除 cameraisp; 一并关配置

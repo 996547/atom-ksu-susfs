@@ -8,7 +8,7 @@ MTK 4.14 内核树大量用尖括号引用同目录头文件, GCC 通过 -I. 容
 import os, re, sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
-INC_RE = re.compile(r'#\s*include\s*<([^/>]+)>')
+INC_RE = re.compile(r'#\s*include\s*<([^>]+)>')
 total = 0
 for dirpath, dirs, files in os.walk(ROOT):
     if ".git" in dirs:
@@ -26,8 +26,16 @@ for dirpath, dirs, files in os.walk(ROOT):
             continue
         def repl(m):
             name = m.group(1)
-            if name in h_files:
-                return '#include "%s"' % name
+            if '/' not in name:
+                # 纯文件名: 仅当同目录真实存在时改引号 (原逻辑)
+                if name in h_files:
+                    return '#include "%s"' % name
+                return m.group(0)
+            # 相对路径尖括号包含 (如 <../../gpio/gpiolib.h>): Clang 要求改用引号
+            if name.startswith('.') or '..' in name:
+                cand = os.path.normpath(os.path.join(dirpath, name))
+                if os.path.isfile(cand):
+                    return '#include "%s"' % name
             return m.group(0)
         new = INC_RE.sub(repl, text)
         if new != text:
