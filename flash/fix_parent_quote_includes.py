@@ -23,33 +23,42 @@ import os, re, sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
 QUOTE_RE = re.compile(r'#\s*include\s*"([^"]+)"')
-total = 0
 
-def find_header(start_dir, name):
-    """在 start_dir 的祖先及祖先的直接子目录中查找 name, 返回真实路径(最近优先)。"""
+# 高频同名头文件拒绝名单: 这类头几乎都由对应 Makefile 的 -I 正确解析,
+# 盲目符号链接会指向错误的同名文件并遮蔽 -I, 造成"隐式声明"等诡异错误.
+# 典型: rpmb-mtk.c 的 #include "core.h" 应由 drivers/char/rpmb/Makefile 的
+#   -I$(srctree)/drivers/mmc/core 解析为 drivers/mmc/core/core.h (声明 mmc_get_card);
+#   若链接到 drivers/pinctrl/core.h 则会丢失 mmc_get_card 声明导致编译失败.
+DENYLIST = {"core.h"}
+
+total = 0
+skipped = 0
+
+def find_headers(start_dir, name):
+    """在 start_dir 的祖先及祖先的直接子目录中查找 name, 返回所有真实路径列表。"""
     d = os.path.abspath(start_dir)
-    # 祖先链
     chain = [d]
     parent = os.path.dirname(d)
     while parent and parent != os.path.dirname(parent):
         chain.append(parent)
         parent = os.path.dirname(parent)
+    cands = []
     # 先查祖先自身, 再查祖先的直接子目录 (覆盖兄弟子目录情况)
     for anc in chain:
         cand = os.path.join(anc, name)
-        if os.path.isfile(cand):
-            return cand
+        if os.path.isfile(cand) and cand not in cands:
+            cands.append(cand)
     for anc in chain:
         try:
             for entry in os.listdir(anc):
                 sub = os.path.join(anc, entry)
                 if os.path.isdir(sub):
                     cand = os.path.join(sub, name)
-                    if os.path.isfile(cand):
-                        return cand
+                    if os.path.isfile(cand) and cand not in cands:
+                        cands.append(cand)
         except OSError:
             continue
-    return None
+    return cands
 
 for dirpath, dirs, files in os.walk(ROOT):
     if ".git" in dirs:
@@ -68,11 +77,21 @@ for dirpath, dirs, files in os.walk(ROOT):
             if "/" in inc:
                 continue  # 含 '/' 的相对包含由 fix_angle_includes.py 处理其角度形式
             base = os.path.basename(inc)
+            if base in DENYLIST:
+                skipped += 1
+                print("SKIP(denylist)", os.path.relpath(fp, ROOT), ":", base)
+                continue
             if os.path.isfile(os.path.join(dirpath, base)):
                 continue  # 同目录已有, 可用
-            real = find_header(dirpath, base)
-            if not real:
+            reals = find_headers(dirpath, base)
+            if not reals:
                 continue
+            if len(reals) > 1:
+                # 多候选歧义: 不臆测, 交由 Makefile 的 -I 或后续显式修复处理
+                skipped += 1
+                print("SKIP(ambiguous %d)" % len(reals), os.path.relpath(fp, ROOT), ":", base)
+                continue
+            real = reals[0]
             link = os.path.join(dirpath, base)
             rel = os.path.relpath(real, dirpath)
             try:
@@ -83,4 +102,4 @@ for dirpath, dirs, files in os.walk(ROOT):
                 print("symlink", os.path.relpath(link, ROOT), "->", rel)
             except OSError as e:
                 print("WARN symlink failed", link, e)
-print("TOTAL symlinked:", total)
+print("TOTAL symlinked:", total, "skipped:", skipped)
