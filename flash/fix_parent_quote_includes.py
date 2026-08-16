@@ -31,6 +31,11 @@ QUOTE_RE = re.compile(r'#\s*include\s*"([^"]+)"')
 #   若链接到 drivers/pinctrl/core.h 则会丢失 mmc_get_card 声明导致编译失败.
 DENYLIST = {"core.h"}
 
+# 歧义时优先选用的"规范位置"候选 (basename -> 相对仓库根的路径).
+# 依据: 同一树内其它目录的 mtk_iommu_ext.h 均被符号链接到 drivers/iommu/mtk_iommu_ext.h,
+# 说明该文件是各平台共用的规范实现. 当窄搜索命中多个同名候选时, 优先用规范位置避免跳过.
+CANONICAL = {"mtk_iommu_ext.h": os.path.join("drivers", "iommu", "mtk_iommu_ext.h")}
+
 total = 0
 skipped = 0
 
@@ -87,11 +92,21 @@ for dirpath, dirs, files in os.walk(ROOT):
             if not reals:
                 continue
             if len(reals) > 1:
-                # 多候选歧义: 不臆测, 交由 Makefile 的 -I 或后续显式修复处理
-                skipped += 1
-                print("SKIP(ambiguous %d)" % len(reals), os.path.relpath(fp, ROOT), ":", base)
-                continue
-            real = reals[0]
+                # 多候选歧义: 若规范位置候选存在则优先使用, 否则不臆测
+                canon = CANONICAL.get(base)
+                real = None
+                if canon:
+                    norm = canon.replace("\\", "/")
+                    for c in reals:
+                        if c.replace("\\", "/").endswith(norm):
+                            real = c
+                            break
+                if real is None:
+                    skipped += 1
+                    print("SKIP(ambiguous %d)" % len(reals), os.path.relpath(fp, ROOT), ":", base)
+                    continue
+            else:
+                real = reals[0]
             link = os.path.join(dirpath, base)
             rel = os.path.relpath(real, dirpath)
             try:
