@@ -92,19 +92,28 @@ for dirpath, dirs, files in os.walk(ROOT):
             if not reals:
                 continue
             if len(reals) > 1:
-                # 多候选歧义: 若规范位置候选存在则优先使用, 否则不臆测
+                # 多候选歧义: 按优先级选择, 避免盲目跳过导致 file not found
+                #   1) 规范位置候选 (CANONICAL)
+                #   2) 含目标平台 mt6873 的候选 (我们固定编 mt6873, 平台特定头几乎都选它)
+                #   3) 否则不臆测, 跳过
+                chosen = None
                 canon = CANONICAL.get(base)
-                real = None
                 if canon:
                     norm = canon.replace("\\", "/")
                     for c in reals:
                         if c.replace("\\", "/").endswith(norm):
-                            real = c
+                            chosen = c
                             break
-                if real is None:
+                if chosen is None:
+                    for c in reals:
+                        if "/mt6873/" in c.replace("\\", "/"):
+                            chosen = c
+                            break
+                if chosen is None:
                     skipped += 1
                     print("SKIP(ambiguous %d)" % len(reals), os.path.relpath(fp, ROOT), ":", base)
                     continue
+                real = chosen
             else:
                 real = reals[0]
             link = os.path.join(dirpath, base)
