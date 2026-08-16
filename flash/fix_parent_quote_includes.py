@@ -94,8 +94,11 @@ for dirpath, dirs, files in os.walk(ROOT):
             if len(reals) > 1:
                 # 多候选歧义: 按优先级选择, 避免盲目跳过导致 file not found
                 #   1) 规范位置候选 (CANONICAL)
-                #   2) 含目标平台 mt6873 的候选 (我们固定编 mt6873, 平台特定头几乎都选它)
-                #   3) 否则不臆测, 跳过
+                #   2) realpath 去重: 多个候选若经符号链接解析为同一真实文件则等价, 直接采用
+                #      (典型: 某平台目录的 X.h 实为指向 common/1.0/X.h 的符号链接)
+                #   3) 含目标平台 mt6873 的候选 (我们固定编 mt6873, 平台特定头几乎都选它)
+                #   4) 退而求其次: 优先 "通用/版本化" 目录 (common/1.0/include 等)
+                #   5) 否则不臆测, 跳过
                 chosen = None
                 canon = CANONICAL.get(base)
                 if canon:
@@ -105,8 +108,25 @@ for dirpath, dirs, files in os.walk(ROOT):
                             chosen = c
                             break
                 if chosen is None:
+                    uniq = []
+                    for c in reals:
+                        try:
+                            rp = os.path.realpath(c)
+                        except OSError:
+                            rp = os.path.abspath(c)
+                        if rp not in uniq:
+                            uniq.append(rp)
+                    if len(uniq) == 1:
+                        chosen = reals[0]
+                if chosen is None:
                     for c in reals:
                         if "/mt6873/" in c.replace("\\", "/"):
+                            chosen = c
+                            break
+                if chosen is None:
+                    for c in reals:
+                        p = c.replace("\\", "/")
+                        if any(t in p for t in ("/common/", "/1.0/", "/1.1/", "/include/")):
                             chosen = c
                             break
                 if chosen is None:
