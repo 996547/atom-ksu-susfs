@@ -177,6 +177,16 @@ jobs:
             -e 's|#ifndef CONFIG_MEDIATEK_DRAMC|#if 1 /* use local stub */|g' \
             -e 's|defined(CONFIG_MEDIATEK_DRAMC)|0|g' \
             {} +
+          # 12.5) DCM 诊断 + 尝试修复: MTK DCM 头用项目宏守卫, 公开树缺失对应宏 -> #error
+          #       打印 dcm 头文件与 Makefile 到日志(供后续精准修复); 并注入最可能的项目宏。
+          echo "===== dcm_v1/mtk_dcm.h ====="; sed -n '1,45p' drivers/misc/mediatek/base/power/dcm_v1/mtk_dcm.h 2>/dev/null || true
+          echo "===== dcm_v1/mt6873/mtk_dcm.h ====="; sed -n '1,45p' drivers/misc/mediatek/base/power/dcm_v1/mt6873/mtk_dcm.h 2>/dev/null || true
+          echo "===== dcm_v1/Makefile ====="; cat drivers/misc/mediatek/base/power/dcm_v1/Makefile 2>/dev/null || true
+          echo "===== base/power/Makefile ====="; cat drivers/misc/mediatek/base/power/Makefile 2>/dev/null || true
+          if [ -f drivers/misc/mediatek/base/power/dcm_v1/Makefile ]; then
+            grep -q "DPROJECT_MT6873" drivers/misc/mediatek/base/power/dcm_v1/Makefile || \
+              sed -i '1i ccflags-y += -DPROJECT_MT6873 -DMTK_DCM_V1 -DMACH_MT6873' drivers/misc/mediatek/base/power/dcm_v1/Makefile
+          fi
           # 12) 4.14 KSU 通用适配 (pgtable.h / ksys_ / strncpy_from_user_nofault)
           python3 ../action-repo/flash/fix_ksu_414_generic.py .
           # 13) lsm_hook.c 在 4.14 的适配 (hlist -> list_head)
