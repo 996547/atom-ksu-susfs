@@ -104,22 +104,12 @@ for dirpath, dirs, files in os.walk(ROOT):
                 if os.path.isfile(cand):
                     return '#include "%s"' % name
                 return m.group(0)
-            # 裸尖括号本地头: 若同名规范头位于任一 include/ 目录(经 -I 可解析), 则不建本地阴影符号链接,
-            # 直接保留原尖括号包含交给 -I 解析(避免遮蔽规范头造成重定义/错配)
-            if name in CANON:
-                return m.group(0)
-            real = find_local(dirpath, name)
-            if real and not is_system_header(real):
-                link = os.path.join(dirpath, name)
-                rel = os.path.relpath(real, dirpath)
-                if not (os.path.islink(link) or os.path.exists(link)):
-                    try:
-                        os.symlink(rel, link)
-                        print("symlink(bare-angle)",
-                              os.path.relpath(link, ROOT), "->", rel)
-                    except OSError as e:
-                        print("WARN symlink failed", link, e)
-                return '#include "%s"' % name
+            # 裸尖括号本地头: 一律保留原尖括号包含, 交给编译器经 -I 解析, 绝不建本地符号链接。
+            # 历史教训(atom/mt6873): 在此 find_local 就近匹配会选到错误平台(mt6853)同名头,
+            # 例如 smi/smi_port.h->mt6853/smi_port.h、base/power/qos/mtk_qos_sram.h->mt6853/...,
+            # 把 mt6853 头遮蔽进编译路径, 与 mt6873 平台头(mt6873-larb-port.h、mtk_gpufreq 等)
+            # 触发 -Werror 重定义, 卡死 mmdvfs/mdp 等子系统。
+            # MTK 各子系统 Makefile 已配好 ccflags -I.../$(MTK_PLATFORM)/, 尖括号本就应由 -I 正确解析。
             return m.group(0)
 
         new = INC_RE.sub(repl, text)
