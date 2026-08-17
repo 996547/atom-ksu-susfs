@@ -70,6 +70,16 @@ def is_system_header(real):
     return False
 
 
+# 预构建规范头集合: 树内任一 include/ 目录下的 .h (经 -I 可解析, 不应被本地符号链接遮蔽).
+# 裸尖括号包含若命中此处, 说明它是"规范头", 应留给 -I 解析, 不要建本地阴影符号链接.
+CANON = set()
+for _dp, _dn, _fns in os.walk(ROOT):
+    if os.path.basename(_dp) == "include":
+        for _f in _fns:
+            if _f.endswith(".h"):
+                CANON.add(_f)
+
+
 for dirpath, dirs, files in os.walk(ROOT):
     if ".git" in dirs:
         dirs.remove(".git")
@@ -94,7 +104,10 @@ for dirpath, dirs, files in os.walk(ROOT):
                 if os.path.isfile(cand):
                     return '#include "%s"' % name
                 return m.group(0)
-            # 裸尖括号本地头
+            # 裸尖括号本地头: 若同名规范头位于任一 include/ 目录(经 -I 可解析), 则不建本地阴影符号链接,
+            # 直接保留原尖括号包含交给 -I 解析(避免遮蔽规范头造成重定义/错配)
+            if name in CANON:
+                return m.group(0)
             real = find_local(dirpath, name)
             if real and not is_system_header(real):
                 link = os.path.join(dirpath, name)
