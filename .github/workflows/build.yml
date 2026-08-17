@@ -162,16 +162,21 @@ jobs:
           python3 ../action-repo/flash/fix_sukisu_syscall_fn_t.py .
           # 11) 4.14 缺 MODULE_IMPORT_NS 宏
           python3 ../action-repo/flash/fix_module_import_ns.py .
-          # 12) helio-dvfsrc-v3: 上游 mt6873 树缺失 drivers/misc/mediatek/dramc/mt6873/dramc.h
-          #     (应声明 mtk_dramc_get_data_rate / mtk_dramc_get_steps_freq), 而 CONFIG_MEDIATEK_DRAMC
-          #     被开启导致 #include <dramc.h> 解析到顶层 dramc.h(无此声明) → 隐式声明错误。
-          #     强制该目录下所有 .c 使用文件自带的本地 stub 实现(原 #ifndef 分支 / #else 分支),
-          #     规避缺失的平台头。仅匹配 CONFIG_MEDIATEK_DRAMC(不碰 CONFIG_MTK_DRAMC)。
-          if [ -d drivers/devfreq/helio-dvfsrc-v3 ]; then
-            for f in drivers/devfreq/helio-dvfsrc-v3/*.c; do
-              sed -i 's|#ifdef CONFIG_MEDIATEK_DRAMC|#if 0 /* mt6873/dramc.h missing in upstream tree; use local stub */|; s|#ifndef CONFIG_MEDIATEK_DRAMC|#if 1 /* use local stub */|' "$f"
-            done
-          fi
+          # 12) 全局(drivers/)禁用 CONFIG_MEDIATEK_DRAMC 相关代码块(缩减内核策略):
+          #     上游 mt6873 树缺失 drivers/misc/mediatek/dramc/mt6873/dramc.h
+          #     (应声明 mtk_dramc_get_ddr_type / get_steps_freq / get_data_rate 及 TYPE_LPDDR* 枚举),
+          #     而 CONFIG_MEDIATEK_DRAMC(带E, 孤儿符号)被开启, 致所有引用缺失符号的文件
+          #     (helio-dvfsrc-v3/*, cm_mgr_v1/mt6873/mtk_cm_mgr_platform.c 等) 隐式声明/未声明错误。
+          #     逐一 sed 已不够, 故对 drivers/ 全部 .c/.h 做三类替换, 强制走各文件自带
+          #     stub / #else 分支, 规避缺失平台头。不碰 CONFIG_MTK_DRAMC(不带E)。
+          #       ① #ifdef  CONFIG_MEDIATEK_DRAMC -> #if 0
+          #       ② #ifndef CONFIG_MEDIATEK_DRAMC -> #if 1
+          #       ③ defined(CONFIG_MEDIATEK_DRAMC) -> 0  (覆盖 #if defined() / #elif / #if !defined() 等)
+          find drivers -type f \( -name '*.c' -o -name '*.h' \) -exec sed -i \
+            -e 's|#ifdef CONFIG_MEDIATEK_DRAMC|#if 0 /* mt6873/dramc.h missing; use local stub */|g' \
+            -e 's|#ifndef CONFIG_MEDIATEK_DRAMC|#if 1 /* use local stub */|g' \
+            -e 's|defined(CONFIG_MEDIATEK_DRAMC)|0|g' \
+            {} +
           # 12) 4.14 KSU 通用适配 (pgtable.h / ksys_ / strncpy_from_user_nofault)
           python3 ../action-repo/flash/fix_ksu_414_generic.py .
           # 13) lsm_hook.c 在 4.14 的适配 (hlist -> list_head)
