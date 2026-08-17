@@ -299,6 +299,10 @@ jobs:
           scripts/config --disable CONFIG_MTK_CAMERA_ISP_OWE_SUPPORT || true
           scripts/config --disable CONFIG_MTK_CAMERA_ISP_MFB_SUPPORT || true
           scripts/config --unset CONFIG_CUSTOM_KERNEL_IMGSENSOR || true
+          # 关闭 wlan/bt/fm/gps 一体编译 (CONFIG_WLAN_DRV_BUILD_IN): 该 MTK 闭源驱动
+          # 在 Clang 下存在大量 incomplete-type / -Wvisibility 真实错误, 且与启动无关;
+          # 缩减内核策略下关闭, 仅保留无条件编译的 connadp 适配层 (不引用 wlan 符号).
+          scripts/config --disable CONFIG_WLAN_DRV_BUILD_IN || true
           make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
 
