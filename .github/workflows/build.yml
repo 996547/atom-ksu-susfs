@@ -292,7 +292,7 @@ jobs:
           export CC=clang
           export LD=ld.lld
           make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- MTK_PLATFORM=mt6873 \
             "${{ github.event.inputs.DEFCONFIG || 'vendor/atom_user_defconfig' }}"
           # KernelSU 所需
           scripts/config --enable CONFIG_KSU
@@ -340,8 +340,18 @@ jobs:
           # 在 Clang 下存在大量 incomplete-type / -Wvisibility 真实错误, 且与启动无关;
           # 缩减内核策略下关闭, 仅保留无条件编译的 connadp 适配层 (不引用 wlan 符号).
           scripts/config --disable CONFIG_WLAN_DRV_BUILD_IN || true
+          # 关键: 强制 MTK_PLATFORM=mt6873 (公开重建树默认/错误地解析为 mt6853,
+          #   导致 smi/smi_port.h 链拉进 mt6853-larb-port.h, 与 mmdvfs/mdp 直接包含的
+          #   mt6873-larb-port.h 宏重名 -> -Werror 重定义; 同时影响 disp/vdec/venc/m4u/iommu 等).
+          scripts/config --set-str CONFIG_MTK_PLATFORM "mt6873" || true
+          # ION 暂存驱动在公开树缺 mtk/ion.h 与 uapi/ion.h (404), 无法编译 -> 关闭.
+          #   (ION 为 deprecated staging, KernelSU/SUSFS 不依赖; 实机图形缓冲由 vendor 分区驱动提供)
+          scripts/config --disable CONFIG_ION || true
+          scripts/config --disable CONFIG_STAGING_ION || true
+          scripts/config --disable CONFIG_MTK_ION || true
+          scripts/config --disable CONFIG_MTK_ION_DEBUG || true
           make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- MTK_PLATFORM=mt6873 olddefconfig
 
       - name: 编译内核 (纯 Image.gz, KSU+SUSFS 已内建)
         run: |
@@ -353,7 +363,7 @@ jobs:
           export CC=clang
           export LD=ld.lld
           make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- MTK_PLATFORM=mt6873 \
             Image.gz -j"$(nproc)"
 
       - name: 校验产物 Image.gz (纯内核, 无 appended DTB) + KSU/SUSFS 是否存在
