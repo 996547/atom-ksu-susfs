@@ -177,15 +177,27 @@ jobs:
             -e 's|#ifndef CONFIG_MEDIATEK_DRAMC|#if 1 /* use local stub */|g' \
             -e 's|defined(CONFIG_MEDIATEK_DRAMC)|0|g' \
             {} +
-          # 12.5) DCM 诊断 + 尝试修复: MTK DCM 头用项目宏守卫, 公开树缺失对应宏 -> #error
-          #       打印 dcm 头文件与 Makefile 到日志(供后续精准修复); 并注入最可能的项目宏。
-          echo "===== dcm_v1/mtk_dcm.h ====="; sed -n '1,45p' drivers/misc/mediatek/base/power/dcm_v1/mtk_dcm.h 2>/dev/null || true
-          echo "===== dcm_v1/mt6873/mtk_dcm.h ====="; sed -n '1,45p' drivers/misc/mediatek/base/power/dcm_v1/mt6873/mtk_dcm.h 2>/dev/null || true
+          # 12.5) DCM 修复 (鲁棒版): 上游 MTK DCM 头用项目宏守卫, 缺对应平台宏 -> #error 致编译失败.
+          #       干净头 include/dcm_v1/mtk_dcm.h 仅含函数声明, 无 #error.
+          #       策略: 在 drivers/ 内查找含该 #error 守卫的 mtk_dcm.h, 一律用干净头覆盖;
+          #       干净头缺失则跳过. 同时诊断打印 dcm 头与 Makefile 供日志复盘.
+          echo "===== dcm_v1/mt6873/mtk_dcm.h ====="; sed -n '1,30p' drivers/misc/mediatek/base/power/dcm_v1/mt6873/mtk_dcm.h 2>/dev/null || echo "(不存在)"
           echo "===== dcm_v1/Makefile ====="; cat drivers/misc/mediatek/base/power/dcm_v1/Makefile 2>/dev/null || true
-          echo "===== base/power/Makefile ====="; cat drivers/misc/mediatek/base/power/Makefile 2>/dev/null || true
-          if [ -f drivers/misc/mediatek/base/power/dcm_v1/Makefile ]; then
-            grep -q "DPROJECT_MT6873" drivers/misc/mediatek/base/power/dcm_v1/Makefile || \
-              sed -i '1i ccflags-y += -DPROJECT_MT6873 -DMTK_DCM_V1 -DMACH_MT6873' drivers/misc/mediatek/base/power/dcm_v1/Makefile
+          echo "===== dcm_v1/mt6873/Makefile ====="; cat drivers/misc/mediatek/base/power/dcm_v1/mt6873/Makefile 2>/dev/null || true
+          SRC=drivers/misc/mediatek/base/power/include/dcm_v1/mtk_dcm.h
+          if [ -f "$SRC" ]; then
+            hits=$(grep -rl 'NO corresponding project of mtk_dcm.h' drivers/ 2>/dev/null || true)
+            if [ -n "$hits" ]; then
+              echo "$hits" | while read -r f; do cp -f "$SRC" "$f"; echo "[ok] dcm: 用干净头覆盖 $f"; done
+            else
+              echo "[i] 未找到含 #error 守卫的 mtk_dcm.h (当前上游可能已无此问题)"
+            fi
+            # 防御: 将干净头铺到 dcm_v1/mt6873/ 与 dcm_v1/ 下, 防止引号包含/旧版阴影头解析到错误头
+            [ -d drivers/misc/mediatek/base/power/dcm_v1/mt6873 ] && \
+              cp -f "$SRC" drivers/misc/mediatek/base/power/dcm_v1/mt6873/mtk_dcm.h && \
+              echo "[ok] dcm: 铺干净头到 dcm_v1/mt6873/mtk_dcm.h"
+          else
+            echo "[W] 干净头 $SRC 不存在, 跳过 dcm 修复"
           fi
           # 12) 4.14 KSU 通用适配 (pgtable.h / ksys_ / strncpy_from_user_nofault)
           python3 ../action-repo/flash/fix_ksu_414_generic.py .
