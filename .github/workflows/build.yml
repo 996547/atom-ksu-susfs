@@ -356,6 +356,15 @@ jobs:
           scripts/config --disable CONFIG_STAGING_ION || true
           scripts/config --disable CONFIG_MTK_ION || true
           scripts/config --disable CONFIG_MTK_ION_DEBUG || true
+          # 音频 DSP 双核(A/B): 缩减内核未开 ADSP_B, 但 audio_ipi/audio_dsp 代码无条件引用
+          #   ADSP_B_ID / ADSP_B_IPI_DMA_MEM_ID (仅 CONFIG_MTK_AUDIO_ADSP_B 下定义) -> undeclared 错误。
+          #   音频 DSP 非启动必需, 关闭以整体编译掉这些代码路径
+          #   (audio_ipi_platform.c 的 HIFI3_B 块由 CONFIG_MTK_AUDIODSP_SUPPORT 守卫;
+          #    dsp-platform-mem-control.o 由 CONFIG_SND_SOC_MTK_AUDIO_DSP 门控)。
+          scripts/config --disable CONFIG_MTK_AUDIODSP_SUPPORT || true
+          scripts/config --disable CONFIG_MTK_AUDIO_CM4_SUPPORT || true
+          scripts/config --disable CONFIG_MTK_AUDIO_ADSP_B || true
+          scripts/config --disable CONFIG_SND_SOC_MTK_AUDIO_DSP || true
           make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- MTK_PLATFORM=mt6873 olddefconfig
 
