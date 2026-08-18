@@ -148,6 +148,12 @@ jobs:
             sed -i 's|#include <dt_idle_states.h>|#include "dt_idle_states.h"|' drivers/cpuidle/cpuidle-mediatek.c || true
           # 6) 全局: 尖括号引用且同目录存在的本地头文件改引号
           python3 ../action-repo/flash/fix_angle_includes.py .
+          # 6c) 同目录本地头用尖括号包含 (<name> 且 name 在源文件同目录真实存在) -> 改引号。
+          #     上游 MTK 树大量驱动如此写 (如 helio-dvfsrc-v3/helio-dvfsrc-qos.c:33
+          #     '#include <helio-dvfsrc-qos.h>'), 但对应 Makefile 未加 -I$(src), Clang 报
+          #     'file not found with <angled> include; use quotes instead'。
+          #     仅作用于单段 name 且同目录真实存在的头, 不碰 <linux/...> 等路径包含。
+          python3 ../action-repo/flash/fix_local_angle_includes.py .
           # 6b) 子目录文件用引号包含"父目录/兄弟目录"头文件 (如 ion/mtk/ion_drv.h 的 "ion.h"、
           #     lpm suspend 的 "mt6873.h")：Clang 下 -I 未含父目录 → file not found。
           #     在被包含文件所在目录建符号链接指向真实头文件(非复制, 避免链接头自身相对包含错位)。
