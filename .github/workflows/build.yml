@@ -103,6 +103,15 @@ jobs:
           #    但 mtk_cm_mgr.h:81 声明为 extern -> 去掉 static 使声明匹配.
           sed -i 's/^static int cm_mgr_cpu_opp_to_dram/int cm_mgr_cpu_opp_to_dram/' \
             drivers/misc/mediatek/base/power/cm_mgr_v1/mt6873/mtk_cm_mgr_platform.c 2>/dev/null || true
+          # 9) Audio AFE PCM: mt6873-afe-pcm.c 引用 mtk_dsp_irq_set_enable/disable
+          #    (音频 DSP 函数, CONFIG_MTK_AUDIODSP_SUPPORT 已关) -> 从 Makefile 剔除.
+          sed -i 's/\bmt6873-afe-pcm\.o\b/#mt6873-afe-pcm.o/' \
+            sound/soc/mediatek/mt6873/Makefile 2>/dev/null || true
+          # 10) DCM autogen: mtk_dcm_autogen.c 引用平台寄存器常量 (MP_ADB_DCM_CFG0 等),
+          #     这些常量在 step 12.5 干净头覆盖后丢失 (干净头仅含函数声明) ->
+          #     从 Makefile 剔除编译. DCM autogen 为自动生成的时钟门控配置, 非启动必需.
+          sed -i 's/\bmtk_dcm_autogen\.o\b/#mtk_dcm_autogen.o/' \
+            drivers/misc/mediatek/base/power/dcm_v1/mt6873/Makefile 2>/dev/null || true
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
         run: |
