@@ -94,6 +94,15 @@ jobs:
               [ -e "security/selinux/$b" ] || ln -snf "ss/$b" "security/selinux/$b"
             done
           fi
+          # 7) Audio USIP: mtk-usip.c 无条件引用 IPI_MSG_A2D_GET_EMI_ADDRESS (仅
+          #    CONFIG_MTK_AUDIO_ADSP_B 下定义, 已关闭) -> 从 Makefile 剔除编译.
+          #    USIP 仅用于音频 DSP 通信, 缩减内核已关音频 DSP, 非启动必需.
+          sed -i 's/\bmtk-usip\.o\b/#mtk-usip.o/' \
+            sound/soc/mediatek/common/Makefile 2>/dev/null || true
+          # 8) cm_mgr: mtk_cm_mgr_platform.c:992 将 cm_mgr_cpu_opp_to_dram 声明为 static,
+          #    但 mtk_cm_mgr.h:81 声明为 extern -> 去掉 static 使声明匹配.
+          sed -i 's/^static int cm_mgr_cpu_opp_to_dram/int cm_mgr_cpu_opp_to_dram/' \
+            drivers/misc/mediatek/base/power/cm_mgr_v1/mt6873/mtk_cm_mgr_platform.c 2>/dev/null || true
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
         run: |
