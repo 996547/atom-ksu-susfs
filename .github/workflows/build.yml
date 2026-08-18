@@ -103,19 +103,19 @@ jobs:
           #    但 mtk_cm_mgr.h:81 声明为 extern -> 去掉 static 使声明匹配.
           sed -i 's/^static int cm_mgr_cpu_opp_to_dram/int cm_mgr_cpu_opp_to_dram/' \
             drivers/misc/mediatek/base/power/cm_mgr_v1/mt6873/mtk_cm_mgr_platform.c 2>/dev/null || true
-          # 9) Audio AFE PCM: mt6873-afe-pcm.c 引用 mtk_dsp_irq_set_enable/disable
-          #    (音频 DSP 函数, CONFIG_MTK_AUDIODSP_SUPPORT 已关) -> 从 Makefile 剔除.
-          sed -i 's/\bmt6873-afe-pcm\.o\b/#mt6873-afe-pcm.o/' \
-            sound/soc/mediatek/mt6873/Makefile 2>/dev/null || true
-          # 10) DCM: step 12.5 用干净头覆盖了 #error 守卫的平台头, 但干净头仅含函数声明,
-          #     丢失了寄存器常量 (MP_ADB_DCM_CFG0, CPU_PLLDIV_CFG0, MCUSYS_DCM_CFG0 等).
-          #     mtk_dcm_autogen.c / mtk_dcm_internal.c 等多个源文件引用这些常量 ->
-          #     整体排除 dcm_v1/mt6873/ 子目录. DCM 为动态时钟门控 (功耗优化), 非启动必需.
-          sed -i 's|^\(obj-.*+= \)mt6873/|#\1mt6873/|' \
-            drivers/misc/mediatek/base/power/dcm_v1/Makefile 2>/dev/null || true
-          # 防御: 也排除 mt6873/Makefile 内所有 obj 行 (以防父 Makefile 用 obj-y 直接列 .o)
-          sed -i 's|^\(obj-.*+=.*\)|#\1|' \
-            drivers/misc/mediatek/base/power/dcm_v1/mt6873/Makefile 2>/dev/null || true
+          # 9) Audio: 缩减内核已关音频 DSP (CONFIG_MTK_AUDIODSP_SUPPORT 等), 但 mt6873 音频
+          #    平台代码仍被编入 (mt6873-afe-pcm.c 引用 mtk_dsp_irq_*; 复合对象
+          #    snd-soc-mt6873-afe.o 的成员行被注释后 obj 行仍在 -> no rule to make target).
+          #    整体排除 mt6873 音频平台目录. sound/soc/mediatek/common/ (通用层) 保留.
+          sed -i '/mt6873\//s/^\(obj-\)/#\1/' sound/soc/mediatek/Makefile 2>/dev/null || true
+          # 防御: mt6873 子 Makefile 内所有 obj 行也注释
+          sed -i 's/^\(obj-.*\)$/#\1/' sound/soc/mediatek/mt6873/Makefile 2>/dev/null || true
+          # 10) DCM: step 12.5 干净头覆盖后丢失寄存器常量, mt6873 子目录多文件 (autogen/internal)
+          #     引用常量报 undeclared; 排除子目录后父 Makefile 仍按 $(MTK_PLATFORM) 变量归档
+          #     mt6873/built-in.o (字面 sed 匹配不到变量行) -> 从 base/power/Makefile
+          #     整体排除 dcm_v1/. DCM 为动态时钟门控(功耗优化), 非启动必需.
+          sed -i '/dcm_v1\//s/^\(obj-\)/#\1/' \
+            drivers/misc/mediatek/base/power/Makefile 2>/dev/null || true
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
         run: |
