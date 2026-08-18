@@ -107,10 +107,14 @@ jobs:
           #    (音频 DSP 函数, CONFIG_MTK_AUDIODSP_SUPPORT 已关) -> 从 Makefile 剔除.
           sed -i 's/\bmt6873-afe-pcm\.o\b/#mt6873-afe-pcm.o/' \
             sound/soc/mediatek/mt6873/Makefile 2>/dev/null || true
-          # 10) DCM autogen: mtk_dcm_autogen.c 引用平台寄存器常量 (MP_ADB_DCM_CFG0 等),
-          #     这些常量在 step 12.5 干净头覆盖后丢失 (干净头仅含函数声明) ->
-          #     从 Makefile 剔除编译. DCM autogen 为自动生成的时钟门控配置, 非启动必需.
-          sed -i 's/\bmtk_dcm_autogen\.o\b/#mtk_dcm_autogen.o/' \
+          # 10) DCM: step 12.5 用干净头覆盖了 #error 守卫的平台头, 但干净头仅含函数声明,
+          #     丢失了寄存器常量 (MP_ADB_DCM_CFG0, CPU_PLLDIV_CFG0, MCUSYS_DCM_CFG0 等).
+          #     mtk_dcm_autogen.c / mtk_dcm_internal.c 等多个源文件引用这些常量 ->
+          #     整体排除 dcm_v1/mt6873/ 子目录. DCM 为动态时钟门控 (功耗优化), 非启动必需.
+          sed -i 's|^\(obj-.*+= \)mt6873/|#\1mt6873/|' \
+            drivers/misc/mediatek/base/power/dcm_v1/Makefile 2>/dev/null || true
+          # 防御: 也排除 mt6873/Makefile 内所有 obj 行 (以防父 Makefile 用 obj-y 直接列 .o)
+          sed -i 's|^\(obj-.*+=.*\)|#\1|' \
             drivers/misc/mediatek/base/power/dcm_v1/mt6873/Makefile 2>/dev/null || true
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
