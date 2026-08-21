@@ -120,33 +120,9 @@ jobs:
           #     定义 struct mt_gpufreq_power_table_info; 而 gpufreq_v1/mt6873/mtk_gpufreq_plat.h
           #     用不同 guard (___MT_GPUFREQ_PLAT_H___) 也定义同名 struct. 二者 guard 不同,
           #     include/mtk_gpufreq.h 又同时 #include 两者 -> 任一 TU 同时拉入即重定义.
-          #     修复: 给 plat 头的 struct 加 _MT_GPUFREQ_H_ 共享 guard, 使"谁先定义谁生效,
-          #     另一个跳过", 与包含顺序无关. 对其它仅含 plat 头的文件无副作用(struct 仍定义).
-          python3 - <<'PY'
-import re, sys
-p = "drivers/misc/mediatek/base/power/include/gpufreq_v1/mt6873/mtk_gpufreq_plat.h"
-try:
-    s = open(p).read()
-except Exception:
-    print("[i] plat header missing, skip"); sys.exit(0)
-m = re.search(r'struct\s+mt_gpufreq_power_table_info\s*\{', s)
-if not m:
-    print("[i] struct not found, skip"); sys.exit(0)
-i = s.index('{', m.start())
-depth = 0; j = i
-while j < len(s):
-    if s[j] == '{': depth += 1
-    elif s[j] == '}':
-        depth -= 1
-        if depth == 0: break
-    j += 1
-end = s.index(';', j) + 1
-guard_open = "#ifndef _MT_GPUFREQ_H_\n#define _MT_GPUFREQ_H_\n"
-guard_close = "\n#endif /* _MT_GPUFREQ_H_ */\n"
-new = s[:m.start()] + guard_open + s[m.start():end] + guard_close + s[end:]
-open(p, "w").write(new)
-print("[ok] wrapped mt_gpufreq_power_table_info with _MT_GPUFREQ_H_ guard")
-PY
+          #     修复见 flash/fix_gpufreq_plat_guard.py: 给 plat 头 struct 加 _MT_GPUFREQ_H_ 共享
+          #     guard, 与两个头的包含顺序无关. 必须在编译前执行 (此时已 cd kernel).
+          python3 ../action-repo/flash/fix_gpufreq_plat_guard.py
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
         run: |
