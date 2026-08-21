@@ -131,6 +131,18 @@ jobs:
             echo "[gpufreq] remove mt6785 include from $f"
             sed -i '\|#include.*mt6785/mtk_gpufreq.h|d' "$f"
           done
+          # 11b) ged_kpi.c 直接 include mt6785/mtk_gpufreq.h (相对路径 drivers/.../base/power/
+          #      mt6785/mtk_gpufreq.h), 该旧头不声明 v1 链的 mt_gpufreq_get_limit_user ->
+          #      implicit declaration (-Werror). v1 mt6873 plat 头已声明同名函数 (签名
+          #      unsigned int mt_gpufreq_get_limit_user(unsigned int)), 直接补到 mt6785 头末尾,
+          #      任何 include 它的 TU 即可见该声明 (C 允许多次相同 extern 声明, 安全).
+          MT6785_H=$(find . -path "*base/power/mt6785/mtk_gpufreq.h" 2>/dev/null | head -1)
+          if [ -n "$MT6785_H" ]; then
+            if ! grep -q "mt_gpufreq_get_limit_user" "$MT6785_H"; then
+              printf '\nextern unsigned int mt_gpufreq_get_limit_user(unsigned int limit_user);\n' >> "$MT6785_H"
+              echo "[gpufreq] appended mt_gpufreq_get_limit_user decl to $MT6785_H"
+            fi
+          fi
           # 12) 充电/USB-PD 双 dir (charger_bomb/ ti_bomb) 缺 USB-PD / TCPC 厂商头
           #     (struct tcp_ny_uvdm / tcpc_dev_get_by_name / usbpd_mi_vdm_received_cb),
           #     编译期报 incomplete type / implicit declaration / conflicting types.
