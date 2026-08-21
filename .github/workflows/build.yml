@@ -131,41 +131,22 @@ jobs:
             echo "[gpufreq] remove mt6785 include from $f"
             sed -i '\|#include.*mt6785/mtk_gpufreq.h|d' "$f"
           done
-          # 11b) ged_kpi.c 直接 include mt6785/mtk_gpufreq.h (相对路径 drivers/.../base/power/
-          #      mt6785/mtk_gpufreq.h), 该旧头不声明 v1 链的 mt_gpufreq_get_limit_user ->
-          #      implicit declaration (-Werror). v1 mt6873 plat 头已声明同名函数 (签名
-          #      unsigned int mt_gpufreq_get_limit_user(unsigned int)), 直接补到 mt6785 头末尾,
-          #      任何 include 它的 TU 即可见该声明 (C 允许多次相同 extern 声明, 安全).
-          MT6785_H=$(find . -path "*base/power/mt6785/mtk_gpufreq.h" 2>/dev/null | head -1)
-          if [ -n "$MT6785_H" ]; then
-            # 11b/11c) ged_kpi.c 与 Mali mtk_platform_common.c 直接 include 该 mt6785 旧头,
-            #   但 v1 链的 mt_gpufreq_get_limit_user 声明, 与 enum mt_gpufreq_kicker
-            #   (KIR_STRESS..KIR_POLICY=8, NUM_OF_KIR) 只在 v1 mt6873 plat 头里. 把二者补到
-            #   mt6785 头末尾 (guard MTK_GPUFREQ_PLAT_PATCH 防重复). 无单 TU 同时 include
-            #   mt6785 与 v1 plat 头, 不会触发重定义冲突.
-            if ! grep -q "MTK_GPUFREQ_PLAT_PATCH" "$MT6785_H"; then
-              PATCH='
-              #ifndef MTK_GPUFREQ_PLAT_PATCH
-              #define MTK_GPUFREQ_PLAT_PATCH
-              extern unsigned int mt_gpufreq_get_limit_user(unsigned int limit_user);
-              enum mt_gpufreq_kicker {
-              KIR_STRESS,
-              KIR_PROC,
-              KIR_PTPOD,
-              KIR_THERMAL,
-              KIR_BATT_OC,
-              KIR_BATT_LOW,
-              KIR_BATT_PERCENT,
-              KIR_PBM,
-              KIR_POLICY,
-              NUM_OF_KIR
-              };
-              #endif /* MTK_GPUFREQ_PLAT_PATCH */
-              '
-              printf '%s\n' "$PATCH" >> "$MT6785_H"
-              echo "[gpufreq] appended get_limit_user + mt_gpufreq_kicker to $MT6785_H"
-            fi
-          fi
+          # 11b) mt6785 旧 gpufreq 头 -> 转发到 v1 mt6873 plat 头 (结构性修复, 替代逐符号打补丁).
+          #      凡直接 #include base/power/mt6785/mtk_gpufreq.h 的 .c (ged_kpi.c /
+          #      Mali mtk_platform_common.c / mali_kbase_gpuprops.c ...) 都会踩该旧头的缺失:
+          #        - 缺 18 个 extern (get_shader_present / get_limit_user / bringup / ...)
+          #        - 缺全部 5 个 enum (mt_gpufreq_kicker[含 KIR_POLICY] / mt_power_state /
+          #          mt_cg_state / mt_mtcmos_state / mt_buck_state) —— 旧头一个 enum 都没有
+          #        - mt_gpufreq_target 签名不兼容: 旧头 (unsigned int, bool is_real_idx) vs
+          #          v1 (unsigned int, enum mt_gpufreq_kicker). Mali 传 KIR_POLICY(=8) 在 bool
+          #          声明下会被静默转成 1(=KIR_PROC) —— 行为错误, 非仅编译问题.
+          #      逐个补声明是打地鼠 (已连吃 get_limit_user / KIR_POLICY / get_shader_present 三轮),
+          #      故改为让旧头只 #include v1 plat 头 => 全树唯一定义点, 一次性消除
+          #      "缺符号 / 缺 enum / 签名不一致 / 重复定义" 四类问题.
+          #      脚本会动态保留旧头独有的 7 个符号 (g_mfg_lock / power_control_enable/disable /
+          #      aee_rr_*) 与 #define, 并备份原文件为 *.orig; 幂等可重复执行.
+          #      注: MTK_PLATFORM=mt6873 不编译 base/power/mt6785/*.c, 故改头不影响定义端.
+          python3 ../action-repo/flash/fix_gpufreq_mt6785_shim.py .
           # 12) 充电/USB-PD 双 dir (charger_bomb/ ti_bomb) 缺 USB-PD / TCPC 厂商头
           #     (struct tcp_ny_uvdm / tcpc_dev_get_by_name / usbpd_mi_vdm_received_cb),
           #     编译期报 incomplete type / implicit declaration / conflicting types.
