@@ -138,9 +138,32 @@ jobs:
           #      任何 include 它的 TU 即可见该声明 (C 允许多次相同 extern 声明, 安全).
           MT6785_H=$(find . -path "*base/power/mt6785/mtk_gpufreq.h" 2>/dev/null | head -1)
           if [ -n "$MT6785_H" ]; then
-            if ! grep -q "mt_gpufreq_get_limit_user" "$MT6785_H"; then
-              printf '\nextern unsigned int mt_gpufreq_get_limit_user(unsigned int limit_user);\n' >> "$MT6785_H"
-              echo "[gpufreq] appended mt_gpufreq_get_limit_user decl to $MT6785_H"
+            # 11b/11c) ged_kpi.c 与 Mali mtk_platform_common.c 直接 include 该 mt6785 旧头,
+            #   但 v1 链的 mt_gpufreq_get_limit_user 声明, 与 enum mt_gpufreq_kicker
+            #   (KIR_STRESS..KIR_POLICY=8, NUM_OF_KIR) 只在 v1 mt6873 plat 头里. 把二者补到
+            #   mt6785 头末尾 (guard MTK_GPUFREQ_PLAT_PATCH 防重复). 无单 TU 同时 include
+            #   mt6785 与 v1 plat 头, 不会触发重定义冲突.
+            if ! grep -q "MTK_GPUFREQ_PLAT_PATCH" "$MT6785_H"; then
+              PATCH='
+              #ifndef MTK_GPUFREQ_PLAT_PATCH
+              #define MTK_GPUFREQ_PLAT_PATCH
+              extern unsigned int mt_gpufreq_get_limit_user(unsigned int limit_user);
+              enum mt_gpufreq_kicker {
+              KIR_STRESS,
+              KIR_PROC,
+              KIR_PTPOD,
+              KIR_THERMAL,
+              KIR_BATT_OC,
+              KIR_BATT_LOW,
+              KIR_BATT_PERCENT,
+              KIR_PBM,
+              KIR_POLICY,
+              NUM_OF_KIR
+              };
+              #endif /* MTK_GPUFREQ_PLAT_PATCH */
+              '
+              printf '%s\n' "$PATCH" >> "$MT6785_H"
+              echo "[gpufreq] appended get_limit_user + mt_gpufreq_kicker to $MT6785_H"
             fi
           fi
           # 12) 充电/USB-PD 双 dir (charger_bomb/ ti_bomb) 缺 USB-PD / TCPC 厂商头
