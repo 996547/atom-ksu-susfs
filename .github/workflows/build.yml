@@ -123,17 +123,23 @@ jobs:
           #     / gpufreq_input_boost_notify). 两 guard 不同, 任一 TU 同时拉入即 conflicting types /
           #     redefinition of typedef. 干净修复: 让 include/mtk_gpufreq.h 只走 v1 链 ->
           #     删除 mt6785 include 行. (mtk_pbm.c 等被 fix_local_angle_includes.py 改写为
-          #     "../mt6785/..." 的引用, 在"应用 Clang 编译修复"步骤末尾统一还原为 <mtk_gpufreq.h>).
-          sed -i '\|#include.*mt6785/mtk_gpufreq.h|d' include/mtk_gpufreq.h
+          #     "../mt6785/..." 的引用, 在"应用 Clang 编译修复"步骤末尾 #6d 统一还原为 <mtk_gpufreq.h>.)
+          #     注意: 实际共享头不在顶层 include/ 下 (直删 include/mtk_gpufreq.h 曾报 No such file
+          #     致步骤整体失败). 故动态查找树内一切含 mt6785/mtk_gpufreq.h 的头文件, 删除其
+          #     mt6785 include 行 —— mt6873 构建本就不应拉入 mt6785 平台头, 强行只走 v1 链.
+          for f in $(grep -rl "mt6785/mtk_gpufreq.h" --include=*.h . 2>/dev/null); do
+            echo "[gpufreq] remove mt6785 include from $f"
+            sed -i '\|#include.*mt6785/mtk_gpufreq.h|d' "$f"
+          done
           # 12) 充电/USB-PD 双 dir (charger_bomb/ ti_bomb) 缺 USB-PD / TCPC 厂商头
           #     (struct tcp_ny_uvdm / tcpc_dev_get_by_name / usbpd_mi_vdm_received_cb),
           #     编译期报 incomplete type / implicit declaration / conflicting types.
           #     二者非启动必需 (充电由 vendor 分区/ABL 处理), 注释父 Makefile 的
           #     obj-$(CONFIG_*) += charger_bomb/ / ti_bomb/ 行跳过编译 (双保险见 defconfig 步骤).
-          for mk in $(grep -rl 'charger_bomb' drivers/ 2>/dev/null); do
+          for mk in $(grep -rl 'charger_bomb' . 2>/dev/null); do
             sed -i '/^obj-.*charger_bomb/s/^/#/' "$mk"
           done
-          for mk in $(grep -rl 'ti_bomb' drivers/ 2>/dev/null); do
+          for mk in $(grep -rl 'ti_bomb' . 2>/dev/null); do
             sed -i '/^obj-.*ti_bomb/s/^/#/' "$mk"
           done
 
