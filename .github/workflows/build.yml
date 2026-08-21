@@ -116,13 +116,26 @@ jobs:
           #     整体排除 dcm_v1/. DCM 为动态时钟门控(功耗优化), 非启动必需.
           sed -i '/dcm_v1\//s/^\(obj-\)/#\1/' \
             drivers/misc/mediatek/base/power/Makefile 2>/dev/null || true
-          # 11) gpufreq 双定义 (mt6873 结构性): mt6785/mtk_gpufreq.h 用 guard _MT_GPUFREQ_H_
-          #     定义 struct mt_gpufreq_power_table_info; 而 gpufreq_v1/mt6873/mtk_gpufreq_plat.h
-          #     用不同 guard (___MT_GPUFREQ_PLAT_H___) 也定义同名 struct. 二者 guard 不同,
-          #     include/mtk_gpufreq.h 又同时 #include 两者 -> 任一 TU 同时拉入即重定义.
-          #     修复见 flash/fix_gpufreq_plat_guard.py: 给 plat 头 struct 加 _MT_GPUFREQ_H_ 共享
-          #     guard, 与两个头的包含顺序无关. 必须在编译前执行 (此时已 cd kernel).
-          python3 ../action-repo/flash/fix_gpufreq_plat_guard.py
+          # 11) gpufreq 双定义 (mt6873 结构性, 根因修复):
+          #     include/mtk_gpufreq.h 同时 #include "gpufreq_v1/mtk_gpufreq.h" (v1 链, 含 mt6873
+          #     plat 的 struct/typedef/函数定义) 与 "#include ../mt6785/mtk_gpufreq.h" (mt6785 旧头,
+          #     不同 guard _MT_GPUFREQ_H_, 也定义同名 mt_gpufreq_target / gpufreq_power_limit_notify
+          #     / gpufreq_input_boost_notify). 两 guard 不同, 任一 TU 同时拉入即 conflicting types /
+          #     redefinition of typedef. 干净修复: 让 include/mtk_gpufreq.h 只走 v1 链 ->
+          #     删除 mt6785 include 行. (mtk_pbm.c 等被 fix_local_angle_includes.py 改写为
+          #     "../mt6785/..." 的引用, 在"应用 Clang 编译修复"步骤末尾统一还原为 <mtk_gpufreq.h>).
+          sed -i '\|#include.*mt6785/mtk_gpufreq.h|d' include/mtk_gpufreq.h
+          # 12) 充电/USB-PD 双 dir (charger_bomb/ ti_bomb) 缺 USB-PD / TCPC 厂商头
+          #     (struct tcp_ny_uvdm / tcpc_dev_get_by_name / usbpd_mi_vdm_received_cb),
+          #     编译期报 incomplete type / implicit declaration / conflicting types.
+          #     二者非启动必需 (充电由 vendor 分区/ABL 处理), 注释父 Makefile 的
+          #     obj-$(CONFIG_*) += charger_bomb/ / ti_bomb/ 行跳过编译 (双保险见 defconfig 步骤).
+          for mk in $(grep -rl 'charger_bomb' drivers/ 2>/dev/null); do
+            sed -i '/^obj-.*charger_bomb/s/^/#/' "$mk"
+          done
+          for mk in $(grep -rl 'ti_bomb' drivers/ 2>/dev/null); do
+            sed -i '/^obj-.*ti_bomb/s/^/#/' "$mk"
+          done
 
       - name: 下载 Clang r383902 (与原厂 4.14.186-perf 同源自 AOSP, clang 11.0.1)
         run: |
@@ -187,6 +200,15 @@ jobs:
           #     lpm suspend 的 "mt6873.h")：Clang 下 -I 未含父目录 → file not found。
           #     在被包含文件所在目录建符号链接指向真实头文件(非复制, 避免链接头自身相对包含错位)。
           python3 ../action-repo/flash/fix_parent_quote_includes.py .
+          # 6d) gpufreq 还原: fix_local_angle_includes.py 可能把单段尖括号 <mtk_gpufreq.h>
+          #     改写为相对路径 "../mt6785/mtk_gpufreq.h", 使 TU 直接拉入 mt6785 旧头
+          #     (与 v1 链重定义). include/mtk_gpufreq.h 已(步骤#11)只走 v1 链, 故此处
+          #     把一切 mt6785 mtk_gpufreq.h 引用还原为 <mtk_gpufreq.h>.
+          find . -type f \( -name '*.c' -o -name '*.h' \) -exec sed -i \
+            -e 's|"../mt6785/mtk_gpufreq.h"|<mtk_gpufreq.h>|g' \
+            -e 's|"mt6785/mtk_gpufreq.h"|<mtk_gpufreq.h>|g' \
+            -e 's|<mt6785/mtk_gpufreq.h>|<mtk_gpufreq.h>|g' \
+            {} +
           # 7) MTK trace 头文件 TRACE_INCLUDE_PATH (Clang 兼容)
           python3 ../action-repo/flash/fix_trace_include_path.py .
           # 8) 缺失厂商固件打桩
@@ -394,6 +416,10 @@ jobs:
           scripts/config --disable CONFIG_MTK_AUDIO_CM4_SUPPORT || true
           scripts/config --disable CONFIG_MTK_AUDIO_ADSP_B || true
           scripts/config --disable CONFIG_SND_SOC_MTK_AUDIO_DSP || true
+          # 充电/USB-PD: charger_bomb / ti_bomb 缺厂商头, 已在修补步骤 12 注释其 Makefile 编译;
+          #   此处一并关配置 (双保险, 防止 CONFIG_MTK_CHARGER 被 Kconfig select 强制开启).
+          scripts/config --disable CONFIG_MTK_CHARGER || true
+          scripts/config --disable CONFIG_BQ2597X_CHARGE_PUMP || true
           make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- MTK_PLATFORM=mt6873 olddefconfig
 
