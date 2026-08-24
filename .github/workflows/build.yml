@@ -147,6 +147,15 @@ jobs:
           #      aee_rr_*) 与 #define, 并备份原文件为 *.orig; 幂等可重复执行.
           #      注: MTK_PLATFORM=mt6873 不编译 base/power/mt6785/*.c, 故改头不影响定义端.
           python3 ../action-repo/flash/fix_gpufreq_mt6785_shim.py .
+          # 11e) larb-port 宏重定义 (mt6873 结构性, 与 gpufreq 同类): 公开树默认把
+          #      MTK_PLATFORM 解析为 mt6853, 驱动经 smi_pmqos.h -> <smi_port.h> 实际拉进
+          #      include/dt-bindings/memory/mt6853-larb-port.h, 而 mt6873 驱动又直接包含
+          #      mt6873-larb-port.h; 两文件各有独立文件级 guard 但定义大量同名 M4U_PORT_*
+          #      宏(值不同)且无 per-macro 守卫 -> 同一 TU 同时包含即 -Werror 宏重定义,
+          #      波及 disp/vdec/venc/m4u/iommu 等一切走 <smi_port.h> 链的 mt6873 驱动.
+          #      修复: 把 mt6853-larb-port.h 改写为对 mt6873-larb-port.h 的薄转发层
+          #      (mt6873 头自带 guard, 最终同名宏只定义一次, 免疫 -I 顺序). 原文件备份 .orig, 幂等.
+          python3 ../action-repo/flash/fix_larb_port_shim.py .
           # 12) 充电/USB-PD 双 dir (charger_bomb/ ti_bomb) 缺 USB-PD / TCPC 厂商头
           #     (struct tcp_ny_uvdm / tcpc_dev_get_by_name / usbpd_mi_vdm_received_cb),
           #     编译期报 incomplete type / implicit declaration / conflicting types.
