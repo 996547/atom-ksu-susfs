@@ -14,7 +14,9 @@
   遍历整棵树, 对每个路径含非 mt6873 平台 token 的 .h 文件:
     - 计算其 mt6873 等价路径 (把平台段替换为 mt6873);
     - 仅当该 mt6873 等价文件【真实存在】时才改写 (绝不臆测/创建不存在的头);
-    - 改写为薄转发层: 保留原文件首个 include-guard, 仅 #include 等价 mt6873 头;
+    - 改写为薄转发层: 用【与本仓其它头绝不冲突的唯一 guard】包裹, 仅 #include 等价 mt6873 头;
+      (关键: 不能用原文件自身的 guard —— 同源家族的 mt6853/mt6873 头往往共用同名 guard,
+       复用会导致 mt6873 真内容被 guard 短路跳过, 符号凭空消失. 故 guard 由路径 md5 派生, 全局唯一.)
     - 原文件备份为 .orig; 已转发则跳过 (幂等).
   效果: 无论 -I 顺序或硬编码 include 把非 mt6873 头解析到哪, 最终都落到 mt6873 的
          guarded 内容, 同名宏/类型只定义一次, 免疫搜索顺序与硬编码。
@@ -24,7 +26,7 @@
     - gpufreq 的 mt6785/mtk_gpufreq.h 无 mt6873 等价 (其等价在 gpufreq_v1/mt6873/),
       本脚本自动跳过, 仍由 fix_gpufreq_mt6785_shim.py 专门处理。
 """
-import os, re, sys
+import os, re, sys, hashlib
 
 ROOTS = [a for a in sys.argv[1:] if not a.startswith("--")]
 DRY = ("--dry" in sys.argv)
@@ -63,7 +65,10 @@ def main():
                 if re.search(r'#\s*include\s+["<][^">]*mt6873', txt):
                     continue
                 rel = os.path.relpath(eq, dp).replace("\\", "/")
-                guard = first_guard(txt) or ("_PLAT_FWD_%s_" % plat.upper())
+                # 唯一 guard: 由文件相对路径 md5 派生, 保证与任何(含目标 mt6873 头)的
+                # 手写 guard 都不冲突, 从而避免 mt6873 真内容被 guard 短路跳过.
+                uid = hashlib.md5(os.path.relpath(p, ROOT).encode("utf-8")).hexdigest()[:16].upper()
+                guard = "_PLATFWD_%s_" % uid
                 fwd = ("#ifndef %s\n#define %s\n"
                        "#include \"%s\"\n"
                        "#endif /* %s */\n") % (guard, guard, rel, guard)
