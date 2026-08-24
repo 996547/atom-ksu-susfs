@@ -116,6 +116,18 @@ jobs:
           #     整体排除 dcm_v1/. DCM 为动态时钟门控(功耗优化), 非启动必需.
           sed -i '/dcm_v1\//s/^\(obj-\)/#\1/' \
             drivers/misc/mediatek/base/power/Makefile 2>/dev/null || true
+          # 10.5) 全面平台转发层 (Class A 根因的系统性解法, 取代逐个 whack-a-mole):
+          #     公开 MTK 树几乎每个平台头都有 mt6785/mt6853/mt6873/mt6885 多份变体, 本应由 -I
+          #     按 MTK_PLATFORM 选择. 但 (a) 共享头硬编码错误平台 include、(b) 个别模块 -I 默认
+          #     解析到 mt6853 (arch/arm64/Makefile 虽从 CONFIG_MTK_PLATFORM 派生 MTK_PLATFORM=mt6873,
+          #     仍有模块 -I 顺序异常), 导致每次编译都冒出新的"宏重定义/类型冲突/隐式声明".
+          #     脚本遍历 include/ 与 drivers/misc/mediatek/, 对【每个存在 mt6873 等价头】的非 mt6873
+          #     平台头改写为对 mt6873 等价头的薄转发 (保留原 guard, 备份 .orig, 幂等). 效果: 无论 -I
+          #     顺序或硬编码 include 把非 mt6873 头解析到哪, 最终都落到 mt6873 的 guarded 内容,
+          #     同名宏/类型只定义一次. 未被动到的头不参与编译=无害; 需回滚时用 *.orig.
+          #     注: gpufreq 的 mt6785/mtk_gpufreq.h 无 mt6873 等价 (等价在 gpufreq_v1/mt6873/),
+          #     本脚本自动跳过, 仍由下方 #11 专门处理.
+          python3 ../action-repo/flash/fix_platform_forward_all.py include drivers/misc/mediatek
           # 11) gpufreq 双定义 (mt6873 结构性, 根因修复):
           #     include/mtk_gpufreq.h 同时 #include "gpufreq_v1/mtk_gpufreq.h" (v1 链, 含 mt6873
           #     plat 的 struct/typedef/函数定义) 与 "#include ../mt6785/mtk_gpufreq.h" (mt6785 旧头,
