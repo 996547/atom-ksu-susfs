@@ -99,11 +99,100 @@ void charger_device_unregister(struct charger_device *dev) { }
 __attribute__((weak))
 void charger_dev_notify(struct charger_device *dev, int event) { }
 
+/*
+ * 注: 返回 NULL 而非 ERR_PTR -- MTK 调用方普遍写 `if (!chg_dev)`,
+ * ERR_PTR 是非 NULL 会被误判为"拿到了设备", 故此处必须给 NULL.
+ */
 __attribute__((weak))
 struct charger_device *get_charger_by_name(const char *name)
 {
-    return ERR_PTR(-ENODEV);
+    return NULL;
 }
+
+/* charger_dev_* : 单个 charger 设备操作, 返回 -ENODEV 让调用方走失败分支 */
+__attribute__((weak))
+int charger_dev_enable_otg(struct charger_device *dev, bool en) { return -ENODEV; }
+__attribute__((weak))
+int charger_dev_enable_discharge(struct charger_device *dev, bool en) { return -ENODEV; }
+__attribute__((weak))
+int charger_dev_kick_wdt(struct charger_device *dev) { return -ENODEV; }
+__attribute__((weak))
+int charger_dev_set_boost_current_limit(struct charger_device *dev, u32 uA)
+{
+    return -ENODEV;
+}
+__attribute__((weak))
+int charger_dev_get_ctd_dischg_status(struct charger_device *dev, u8 *status)
+{
+    return -ENODEV;
+}
+
+/*
+ * charger_manager_* : 充电管理器(consumer)接口, 由 mtk_battery / rt_pd_manager /
+ * thermal cooler 引用. 查询型返回 0(= 未挂起 / 温控档位 0 / 速率 0), 设置型返回
+ * -ENODEV; 均为"功能关闭"的安全语义, 不会让调用方 panic.
+ */
+struct charger_consumer;
+
+__attribute__((weak))
+int charger_manager_is_input_suspend(struct charger_consumer *c) { return 0; }
+__attribute__((weak))
+int charger_manager_get_soc_decimal_rate(struct charger_consumer *c) { return 0; }
+__attribute__((weak))
+int charger_manager_get_prop_system_temp_level(struct charger_consumer *c) { return 0; }
+__attribute__((weak))
+int charger_manager_get_prop_system_temp_level_max(struct charger_consumer *c) { return 0; }
+__attribute__((weak))
+int charger_manager_set_input_suspend(struct charger_consumer *c, bool en)
+{
+    return -ENODEV;
+}
+__attribute__((weak))
+int charger_manager_set_prop_system_temp_level(struct charger_consumer *c, int lvl)
+{
+    return -ENODEV;
+}
+__attribute__((weak))
+int charger_manager_enable_high_voltage_charging(struct charger_consumer *c, bool en)
+{
+    return -ENODEV;
+}
+__attribute__((weak))
+int charger_manager_enable_power_path(struct charger_consumer *c, int idx, bool en)
+{
+    return -ENODEV;
+}
+__attribute__((weak))
+int charger_manager_set_input_current_limit(struct charger_consumer *c, int idx,
+        int uA)
+{
+    return -ENODEV;
+}
+
+/* 小米快充扩展 (battery_bomb) */
+__attribute__((weak))
+int chg_get_fastcharge_mode(void) { return 0; }
+__attribute__((weak))
+int chg_set_fastcharge_mode(bool en) { return -ENODEV; }
+
+/* USB gadget 通知电池 USB 状态 (mtu3_gadget_ep0.c), 真实实现返回 void */
+__attribute__((weak))
+void BATTERY_SetUSBState(int usb_state) { }
+
+/* ---------------- 音频 SRAM 桩 (AUDIODSP 已禁用) (weak) ---------------- */
+/* 由 xhci-mtk-uac.c (USB Audio offload) 引用 */
+__attribute__((weak))
+int mtk_audio_request_sram(dma_addr_t *phys, unsigned char **virt,
+        unsigned int length, void *user)
+{
+    return -ENODEV;
+}
+__attribute__((weak))
+int mtk_audio_free_sram(void *user) { return 0; }
+
+/* ---------------- EARA thermal 桩 (weak) ---------------- */
+__attribute__((weak))
+int eara_pass_perf_first_hint(int hint) { return 0; }
 
 /* ---------------- SWPM 桩 (weak) ---------------- */
 __attribute__((weak))
@@ -125,6 +214,35 @@ int mt_ppm_set_dvfs_table(struct mt_ppm_table_info *info)
 }
 __attribute__((weak))
 unsigned int mt_ppm_get_leakage_mw(int domain)
+{
+    return 0;
+}
+
+/*
+ * ppm_main_info 是【数据对象】而非函数:
+ *   ppm_v3/inc/mtk_ppm_internal.h:275  extern struct ppm_data ppm_main_info;
+ * 调用方(eara_thermal/thermal_budget.c)通过宏访问 .cluster_num / .cluster_info[],
+ * 因此必须提供【存储】而不是函数(否则会把代码字节当结构体读).
+ * 用足够大的零填充弱对象: cluster_num=0 使 for_each_ppm_clusters() 循环体不执行,
+ * cluster_info=NULL 也就不会被解引用. 零初始化 -> 落在 .bss, 不增加内核镜像体积.
+ * struct ppm_data 内含 platform_device/platform_driver/mutex/client 数组,
+ * 实测量级为数 KB, 这里给 16KB 并按 64 字节对齐, 留足余量避免越界写。
+ */
+__attribute__((weak))
+unsigned char ppm_main_info[16384] __attribute__((aligned(64)));
+
+/*
+ * 返回 NULL: 调用方 get_cobra_tbl() 明确写了 `if (!cobra_tbl) return;`,
+ * 给 ERR_PTR 会被误判为有效指针并被 memcpy 解引用 -> panic.
+ */
+__attribute__((weak))
+void *ppm_cobra_pass_tbl(void) { return NULL; }
+
+__attribute__((weak))
+int ppm_find_pwr_idx(void *cluster_status) { return 0; }
+
+__attribute__((weak))
+int ppm_main_freq_to_idx(unsigned int cluster_id, unsigned int freq, int dir)
 {
     return 0;
 }

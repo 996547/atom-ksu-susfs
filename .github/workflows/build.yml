@@ -491,10 +491,39 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CC=clang
           export LD=ld.lld
-          make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- MTK_PLATFORM=mt6873 \
-            LDFLAGS_vmlinux="--error-limit=0" \
-            Image.gz -j"$(nproc)"
+          # 自愈链接循环: 我们按"缩减内核"策略禁用了若干 vendor 子系统(ION/charger/
+          # AUDIODSP/SWPM/ppm_v3), 但公开树里它们的调用方仍被编入 vmlinux, 链接期必然
+          # 出现 undefined symbol. 过去是"链接->看错误->手工补桩->再推一次 CI", 每轮
+          # ~20 分钟(打地鼠). 这里把该循环搬进【同一次构建】: 链接失败且原因是缺符号
+          # 时, 自动为残余符号生成 weak 桩并立即重链, 最多 3 轮.
+          # --error-limit=0 关掉 lld 默认只报 20 条的截断, 确保一轮就拿到完整符号集.
+          MK_ARGS="ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- MTK_PLATFORM=mt6873"
+          set +e
+          for attempt in 1 2 3; do
+            echo "==================== build attempt $attempt ===================="
+            make $MK_ARGS LDFLAGS_vmlinux="--error-limit=0" Image.gz -j"$(nproc)" 2>&1 \
+              | tee "/tmp/build_attempt_${attempt}.log"
+            rc=${PIPESTATUS[0]}
+            if [ "$rc" -eq 0 ]; then
+              echo "== 构建成功 (attempt $attempt) =="
+              break
+            fi
+            if ! grep -q "undefined symbol:" "/tmp/build_attempt_${attempt}.log"; then
+              echo "== 失败原因不是链接缺符号, 不再重试 (见上方编译错误) =="
+              break
+            fi
+            echo "== 链接期缺符号, 自动生成 weak 桩后重链 =="
+            python3 ../action-repo/flash/gen_link_stubs.py \
+              "/tmp/build_attempt_${attempt}.log" . \
+              || { echo "== 无新符号可补, 停止重试 =="; break; }
+          done
+          set -e
+          if [ ! -f arch/arm64/boot/Image.gz ]; then
+            echo "::error::Image.gz 未生成, 构建失败"
+            exit 1
+          fi
+          echo "== 最终产物 =="
+          ls -lh arch/arm64/boot/Image.gz
 
       - name: 校验产物 Image.gz (纯内核, 无 appended DTB) + KSU/SUSFS 是否存在
         run: |
