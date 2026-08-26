@@ -177,6 +177,13 @@ jobs:
           #     修复: 给 tcpc_bomb/Makefile 追加 ccflags-y += -I$(srctree)/.../tcpc_bomb,
           #     一次性让所有 "inc/..." 包含正确解析. 幂等 (marker 已存在则跳过).
           python3 ../action-repo/flash/fix_tcpc_bomb_incpath.py .
+          # 11g) 链接期桩: 被禁用子系统的悬空引用 (ION / charger / SWPM / PPM).
+          #      defconfig 关闭了 ION/MTK_CHARGER/MTK_SWPM 及 ppm_v3 平台功耗模块, 但其
+          #      调用方(Mali GPU / apusys / USB-PD / boost / thermal)仍编入 vmlinux, 链接期
+          #      报 undefined reference. 把 atom_link_shims.c 拷入驱动树并注册 obj-y, 提供
+          #      安全的 no-op 桩 (指针型返 ERR_PTR, 标量型返 0), 调用方 IS_ERR/NULL 检查
+          #      优雅降级, 设备仍可从 DISP 出 logo 启动. 幂等 (marker 已存在则跳过).
+          python3 ../action-repo/flash/fix_link_stubs.py . ../action-repo
           # 12) 充电/USB-PD 双 dir (charger_bomb/ ti_bomb) 缺 USB-PD / TCPC 厂商头
           #     (struct tcp_ny_uvdm / tcpc_dev_get_by_name / usbpd_mi_vdm_received_cb),
           #     编译期报 incomplete type / implicit declaration / conflicting types.
@@ -486,6 +493,7 @@ jobs:
           export LD=ld.lld
           make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- MTK_PLATFORM=mt6873 \
+            LDFLAGS_vmlinux="--error-limit=0" \
             Image.gz -j"$(nproc)"
 
       - name: 校验产物 Image.gz (纯内核, 无 appended DTB) + KSU/SUSFS 是否存在
