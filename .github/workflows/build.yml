@@ -168,6 +168,15 @@ jobs:
           #      修复: 把 mt6853-larb-port.h 改写为对 mt6873-larb-port.h 的薄转发层
           #      (mt6873 头自带 guard, 最终同名宏只定义一次, 免疫 -I 顺序). 原文件备份 .orig, 幂等.
           python3 ../action-repo/flash/fix_larb_port_shim.py .
+          # 11f) tcpc_bomb (USB Type-C PD) 驱动缺失 include path:
+          #     tcpc_bomb/inc/pd_dpm_pdo_select.h:18 做 #include "inc/tcpci.h", 而该驱动
+          #     大量头文件均用 "inc/..." 形式, 期望 -I 含 .../typec/tcpc_bomb 父目录以
+          #     解析到 tcpc_bomb/inc/tcpci.h (该文件在公开树中实测存在). 但 tcpc_bomb/
+          #     Makefile 无任何 ccflags, 父级 typec/Makefile 仅 subdir-ccflags-y +=
+          #     -I.../typec/inc (不含 tcpc_bomb), 故 Clang 报 'inc/tcpci.h' file not found.
+          #     修复: 给 tcpc_bomb/Makefile 追加 ccflags-y += -I$(srctree)/.../tcpc_bomb,
+          #     一次性让所有 "inc/..." 包含正确解析. 幂等 (marker 已存在则跳过).
+          python3 ../action-repo/flash/fix_tcpc_bomb_incpath.py .
           # 12) 充电/USB-PD 双 dir (charger_bomb/ ti_bomb) 缺 USB-PD / TCPC 厂商头
           #     (struct tcp_ny_uvdm / tcpc_dev_get_by_name / usbpd_mi_vdm_received_cb),
           #     编译期报 incomplete type / implicit declaration / conflicting types.
