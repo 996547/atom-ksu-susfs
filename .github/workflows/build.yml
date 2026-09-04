@@ -402,6 +402,19 @@ jobs:
       - name: 生成 defconfig 并开启 KSU / SUSFS / 关闭 APPENDED_DTB
         run: |
           cd kernel
+          # 当 WITH_KSU=false 时, 上游源码树的 drivers/Kconfig 可能已含
+          # source "drivers/kernelsu/Kconfig" 行 (但 drivers/kernelsu/ 目录不存在),
+          # 导致 make olddefconfig 找不到文件而失败. 移除该行.
+          if [ "${{ github.event.inputs.WITH_KSU }}" = "false" ]; then
+            if grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig 2>/dev/null; then
+              sed -i '\#drivers/kernelsu/Kconfig#d' drivers/Kconfig
+              echo "[fix] removed 'source drivers/kernelsu/Kconfig' from drivers/Kconfig (WITH_KSU=false)"
+            fi
+            if grep -q 'kernelsu' drivers/Makefile 2>/dev/null; then
+              sed -i '/kernelsu/d' drivers/Makefile
+              echo "[fix] removed kernelsu line from drivers/Makefile (WITH_KSU=false)"
+            fi
+          fi
           export ARCH=arm64
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
