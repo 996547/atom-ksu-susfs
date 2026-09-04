@@ -493,6 +493,24 @@ jobs:
           scripts/config --disable CONFIG_LTO_CLANG || true
           scripts/config --disable CONFIG_LTO || true
           scripts/config --disable CONFIG_THINLTO || true
+          # 【根因新假设 - 头号嫌疑】禁用 KASLR (CONFIG_RANDOMIZE_BASE)。
+          #   实测 KSU 内核刷入后: expdb 显示 "rst from: kernel" + "AP Watchdog"(内核 hang 被看门狗咬),
+          #   ramoops/console-ramoops 262KB 全是刷入前的原厂会话日志(KSU 内核零 printk 输出),
+          #   expdb kedump 用原厂偏移(0x4ab808)读 KSU 内核 __log_buf 读到全零(布局不同)。
+          #   => KSU 内核死在 console_init 之前, 无任何输出。
+          #   "LLD 链接的 4.14 arm64 内核 + KASLR" 是该症状的经典根因:
+          #   KASLR 重定位代码在 head.S 的 __primary_switch 前后执行, 恰好早于 console 初始化,
+          #   若 LLD 生成的 RELA 重定位表与 kaslr_early 代码不兼容, 会在此 hang/同步异常, 零输出。
+          #   原厂与 KSU 都 CONFIG_RANDOMIZE_BASE=y; 但原厂用 GCC, 我们用 clang/LLD -> 风险点。
+          #   调试内核不需要 KASLR, 关闭以消除该整类早期风险。
+          scripts/config --disable CONFIG_RANDOMIZE_BASE || true
+          # 【次嫌疑】禁用 LTO: defconfig 有 CONFIG_LTO_CLANG=y 但无 THINLTO, 与原厂
+          #   (LTO=y + THINLTO=y) 配置不同; full LTO 在 clang/LLD 4.14 上亦有已知早期问题。
+          #   LTO 是 Kconfig choice, 用 LTO_NONE 显式占位。
+          scripts/config --enable CONFIG_LTO_NONE || true
+          scripts/config --disable CONFIG_LTO_CLANG || true
+          scripts/config --disable CONFIG_LTO || true
+          scripts/config --disable CONFIG_THINLTO || true
           # 关闭 STRONG stack-protector (Clang 兼容)
           scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG || true
           # 关键: 关闭 appended DTB, 产出纯 Image.gz (设备用 dtbo 分区提供 DTB)
