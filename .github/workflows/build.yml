@@ -478,6 +478,21 @@ jobs:
           scripts/config --disable CONFIG_MTK_GPU_OPP_STATS_SUPPORT || true
           scripts/config --disable CONFIG_MTK_GPU_SWPM_SUPPORT || true
           scripts/config --disable CONFIG_MTK_PTPOD_GPU || true
+          # 【头号嫌疑修复】禁用 KASLR (CONFIG_RANDOMIZE_BASE)。
+          #   实测(2026-09-04): 已排除 DTB 传递(原厂同为纯 Image.gz 无 appended DTB)、
+          #   GPU/ION 矛盾(禁 GPU 后仍 bootloop)、PANIC_ON_OOPS/CFI。pstore 全量开启后
+          #   KSU 内核仍零 printk 输出 + expdb 显示 "rst from: kernel" + AP watchdog 咬死
+          #   => 内核 hang 在 console_init 之前的 start_kernel 前半段/head.S 阶段。
+          #   LLD 链接的 4.14 arm64 内核, KASLR 在 head.S __primary_switch 做重定位,
+          #   LLD 的 RELA/偏移处理与原厂(也是 LLD 11)存在版本组合差异时会在该阶段
+          #   静默挂死 —— 与全部症状吻合。禁用 KASLR 消除该整段代码路径。
+          scripts/config --disable CONFIG_RANDOMIZE_BASE || true
+          # 【次嫌疑】禁用 LTO: defconfig 为 LTO_CLANG=y(无 THINLTO), 与原厂
+          #   (LTO+THINLTO) 组合不同, full-LTO 下重定位/符号地址布局差异同样可能
+          #   影响早期代码。禁用后走常规 .o 链接, 布局更接近非-LKD 常规构建。
+          scripts/config --disable CONFIG_LTO_CLANG || true
+          scripts/config --disable CONFIG_LTO || true
+          scripts/config --disable CONFIG_THINLTO || true
           # 关闭 STRONG stack-protector (Clang 兼容)
           scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG || true
           # 关键: 关闭 appended DTB, 产出纯 Image.gz (设备用 dtbo 分区提供 DTB)
