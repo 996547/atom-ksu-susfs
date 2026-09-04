@@ -424,11 +424,28 @@ jobs:
           else
             scripts/config --disable CONFIG_KSU_SUSFS || true
           fi
-          # pstore/ramoops (取证用, 默认开)
+          # pstore/ramoops (取证用, 默认开): 全量开启, 让任何崩溃(含早期 oops/panic)
+          # 都能落盘到 ramoops 保留区(与原厂同地址 0x4d010000), 重启进原厂内核后
+          # 可在 /sys/fs/pstore 读到本次 KSU 内核的崩溃现场, 终结"静默重启无日志"。
           if [ "${{ github.event.inputs.WITH_PSTORE }}" != "false" ]; then
             scripts/config --enable CONFIG_PSTORE
+            scripts/config --enable CONFIG_PSTORE_CONSOLE
+            scripts/config --enable CONFIG_PSTORE_PMSG
             scripts/config --enable CONFIG_PSTORE_RAM
+            scripts/config --enable CONFIG_PSTORE_COMPRESS || true
+            scripts/config --enable CONFIG_PSTORE_DEFLATE_COMPRESS || true
+            scripts/config --enable CONFIG_PSTORE_ZLIB_COMPRESS || true
           fi
+          # 【关键健壮性】关闭 PANIC_ON_OOPS: 原厂=n。开启后任何本可恢复的 oops 都会
+          # 立即升级为 panic 静默重启(屏幕来不及输出), 完全吻合"只有 logo、无文字、重启"。
+          # 关闭后遇到同类 oops 仅打 WARNING 继续跑, 多数情况能正常开机。
+          scripts/config --disable CONFIG_PANIC_ON_OOPS || true
+          # 【关键健壮性】对齐原厂: 关闭 ARM64 指针认证(PTR_AUTH)/BTI 分支保护。
+          # 若原厂未开启而本树默认开启, 早期代码会发出 PAC/BTI 指令但 BL/EL2 未设密钥 ->
+          # start_kernel 前后同步异常静默重启。关闭后整类风险消除(调试内核不需要该安全特性)。
+          scripts/config --disable CONFIG_ARM64_PTR_AUTH || true
+          scripts/config --disable CONFIG_ARM64_BTI || true
+          scripts/config --disable CONFIG_ARM64_BTI_KERNEL || true
           # 关闭 STRONG stack-protector (Clang 兼容)
           scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG || true
           # 关键: 关闭 appended DTB, 产出纯 Image.gz (设备用 dtbo 分区提供 DTB)
