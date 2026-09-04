@@ -466,6 +466,18 @@ jobs:
           scripts/config --enable CONFIG_ARM64_VA_BITS_39 || true
           scripts/config --disable CONFIG_ARM64_VA_BITS_48 || true
           scripts/config --set-val CONFIG_ARM64_VA_BITS 39 || true
+          # 【配置自洽 / 二分法诊断】禁用 Mali GPU 驱动。
+          #   本树已禁用 ION(CONFIG_ION 关闭, 因公开树缺 mtk/ion.h 与 uapi/ion.h, 无法启用),
+          #   但 CONFIG_MTK_GPU_SUPPORT 仍为 y -> Mali(kbase, valhall r25p0) 被编入却只能
+          #   拿到 ion_* 的 weak 桩(返回 ERR_PTR)。GPU 初始化依赖 ION 分配内存, 一旦 probe
+          #   时挂住即触发硬件 watchdog 重启, 表现为"卡 Redmi logo 后重启"。
+          #   实测 Image 内 kbase 符号 205 处、mali 247 处, 而 ion_drv_probe 为 0, 自相矛盾。
+          #   禁用 GPU 让配置自洽; Android 可回退软件渲染启动, 足以验证内核能否开机。
+          scripts/config --disable CONFIG_MTK_GPU_SUPPORT || true
+          scripts/config --disable CONFIG_MTK_GPU_COMMON_DVFS_SUPPORT || true
+          scripts/config --disable CONFIG_MTK_GPU_OPP_STATS_SUPPORT || true
+          scripts/config --disable CONFIG_MTK_GPU_SWPM_SUPPORT || true
+          scripts/config --disable CONFIG_MTK_PTPOD_GPU || true
           # 关闭 STRONG stack-protector (Clang 兼容)
           scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG || true
           # 关键: 关闭 appended DTB, 产出纯 Image.gz (设备用 dtbo 分区提供 DTB)
