@@ -446,6 +446,26 @@ jobs:
           scripts/config --disable CONFIG_ARM64_PTR_AUTH || true
           scripts/config --disable CONFIG_ARM64_BTI || true
           scripts/config --disable CONFIG_ARM64_BTI_KERNEL || true
+          # 【关键健壮性】关闭 CFI (Control Flow Integrity)。
+          #   原厂开启了 CONFIG_CFI_CLANG=y + CFI_CLANG_SHADOW=y, 且
+          #   CONFIG_CFI_PERMISSIVE 未开启 = **严格模式**: 任何间接调用的函数指针签名
+          #   不匹配就 trap -> panic。而本构建为链接通过, 用 gen_link_stubs.py 生成了
+          #   一批 weak 桩, 其签名统一为 `long NAME(void)`(与原函数参数表不同)。
+          #   内核里大量回调经由 ops 函数指针发起, 一旦命中被桩替换的符号便触发 CFI
+          #   trap; 叠加 PANIC_ON_OOPS=y 即"屏上无输出、直接重启"= 卡 Redmi logo。
+          #   调试内核不需要 CFI, 关闭以消除整类风险 (桩本身已是"假实现", CFI 无意义)。
+          scripts/config --disable CONFIG_CFI_CLANG || true
+          scripts/config --disable CONFIG_CFI_CLANG_SHADOW || true
+          scripts/config --disable CONFIG_CFI || true
+          # 【对齐原厂】MODULES: vendor 分区的 .ko (WiFi/触摸/GPU 等) 依赖内核模块支持。
+          #   defconfig 未显式声明, 若由 Kconfig 默认解析为 n, 模块无法加载。
+          scripts/config --enable CONFIG_MODULES || true
+          scripts/config --enable CONFIG_MODULE_UNLOAD || true
+          scripts/config --enable CONFIG_MODULES_USE_ELF_RELA || true
+          # 【对齐原厂】VA_BITS=39 (4K pages 下本就是默认, 显式固化以防解析漂移)
+          scripts/config --enable CONFIG_ARM64_VA_BITS_39 || true
+          scripts/config --disable CONFIG_ARM64_VA_BITS_48 || true
+          scripts/config --set-val CONFIG_ARM64_VA_BITS 39 || true
           # 关闭 STRONG stack-protector (Clang 兼容)
           scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG || true
           # 关键: 关闭 appended DTB, 产出纯 Image.gz (设备用 dtbo 分区提供 DTB)
