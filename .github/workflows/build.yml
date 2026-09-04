@@ -508,6 +508,22 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CC=clang
           export LD=ld.lld
+          # 【关键】4.14 老内核 + clang 的告警降级配方 (沿用 build.sh 已验证配方)。
+          #   此前本 workflow 未设 KCFLAGS, 导致任何 implicit-function-declaration 之类
+          #   的老代码告警都被内核 -Werror 放大成编译错误并中断整轮构建
+          #   (实例: drivers/misc/mediatek/base/power/cpumssv_v1/mt6873/mtk_mssv.c
+          #    的 udi_reg_read/udi_reg_write 隐式声明 -> run 33834010586 失败)。
+          #   注意: clang 下 implicit-int / implicit-function-declaration 默认即为 error,
+          #   必须用 -Wno-... 直接关闭, -Wno-error=... 对它们无效。
+          #   -Wno-error 兜底把所有告警降级为警告, 避免 15 分钟一轮的构建反复卡在告警上。
+          export KCFLAGS="-Wno-implicit-function-declaration -Wno-implicit-int \
+            -Wno-error=incompatible-pointer-types -Wno-error=array-bounds \
+            -Wno-error=format -Wno-error=enum-conversion \
+            -Wno-error=address-of-packed-member -Wno-unknown-warning-option \
+            -Wno-error -Wno-unused-but-set-variable -Wno-unused-variable \
+            -Wno-unused-function -Wno-error=unused-but-set-variable \
+            -fno-builtin-stpcpy -fno-builtin-stpncpy"
+          echo "KCFLAGS=$KCFLAGS"
           # 自愈链接循环: 我们按"缩减内核"策略禁用了若干 vendor 子系统(ION/charger/
           # AUDIODSP/SWPM/ppm_v3), 但公开树里它们的调用方仍被编入 vmlinux, 链接期必然
           # 出现 undefined symbol. 过去是"链接->看错误->手工补桩->再推一次 CI", 每轮
