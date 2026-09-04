@@ -206,6 +206,7 @@ jobs:
           echo "$HOME/clang/bin" >> "$GITHUB_PATH"
 
       - name: 集成 KernelSU (SukiSU-Ultra nongki, 来自本仓库 susu.tar.gz)
+        if: ${{ github.event.inputs.WITH_KSU != 'false' }}
         run: |
           cd kernel
           rm -rf KernelSU
@@ -410,11 +411,13 @@ jobs:
           make ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- MTK_PLATFORM=mt6873 \
             "${{ github.event.inputs.DEFCONFIG || 'vendor/atom_user_defconfig' }}"
-          # KernelSU 所需
-          scripts/config --enable CONFIG_KSU
-          scripts/config --enable CONFIG_KPROBES
-          scripts/config --enable CONFIG_KALLSYMS
-          scripts/config --enable CONFIG_KALLSYMS_ALL
+          # KernelSU 所需 (受 WITH_KSU 控制)
+          if [ "${{ github.event.inputs.WITH_KSU }}" != "false" ]; then
+            scripts/config --enable CONFIG_KSU
+            scripts/config --enable CONFIG_KPROBES
+            scripts/config --enable CONFIG_KALLSYMS
+            scripts/config --enable CONFIG_KALLSYMS_ALL
+          fi
           # SUSFS (默认开)
           if [ "${{ github.event.inputs.WITH_SUSFS }}" != "false" ]; then
             scripts/config --enable CONFIG_KSU_SUSFS
@@ -624,18 +627,32 @@ jobs:
           ls -lh arch/arm64/boot/Image.gz
 
       - name: 校验产物 Image.gz (纯内核, 无 appended DTB) + KSU/SUSFS 是否存在
+        env:
+          WITH_KSU: ${{ github.event.inputs.WITH_KSU }}
+          WITH_SUSFS: ${{ github.event.inputs.WITH_SUSFS }}
         run: |
           cd kernel
           ls -lh arch/arm64/boot/Image.gz
           python3 - <<'PY'
-          import gzip
+          import gzip, os
           data = open('arch/arm64/boot/Image.gz','rb').read()
           raw = gzip.decompress(data)
           print("decompressed kernel size:", len(raw))
           print("appended DTB present:", b'\xd0\x0d\xfe\xed' in raw)
+          print("ARM64 magic @56:", raw[56:60] == b'ARM\x64')
           print("KernelSU strings:", raw.count(b'KernelSU'))
           print("susfs strings:", raw.lower().count(b'susfs'))
-          assert raw.count(b'KernelSU') > 0, "KernelSU NOT compiled in!"
+          # 通用断言: 镜像必须是合法 ARM64 Image (无论是否含 KSU)
+          assert raw[56:60] == b'ARM\x64', "NOT a valid ARM64 Image!"
+          # KSU/SUSFS 字符串断言仅在对应功能开启时执行 (对照构建时跳过)
+          if os.environ.get('WITH_KSU') != 'false':
+              assert raw.count(b'KernelSU') > 0, "KernelSU NOT compiled in! (WITH_KSU=true)"
+          else:
+              print("[skip] WITH_KSU=false, 不校验 KernelSU 字符串")
+          if os.environ.get('WITH_SUSFS') != 'false':
+              assert raw.lower().count(b'susfs') > 0, "susfs NOT compiled in! (WITH_SUSFS=true)"
+          else:
+              print("[skip] WITH_SUSFS=false, 不校验 susfs 字符串")
           PY
 
       - name: 打包 AnyKernel3 (纯 Image.gz, 保留设备 ramdisk/dtbo)
