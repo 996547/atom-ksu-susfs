@@ -527,8 +527,12 @@ jobs:
           scripts/config --disable CONFIG_LTO_CLANG || true
           scripts/config --disable CONFIG_LTO || true
           scripts/config --disable CONFIG_THINLTO || true
-          # 关闭 STRONG stack-protector (Clang 兼容)
-          scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG || true
+          # 【对齐原厂】恢复 STRONG stack-protector (原厂=STRONG, 之前误关导致代码生成差异)
+          # 原厂 clang 11.0.1 + CC_STACKPROTECTOR_STRONG=y 能正常开机, 说明 clang 兼容 STRONG.
+          # 之前关 STRONG 是错误假设("Clang 兼容"), 实际改变了所有函数的栈布局, 可能暴露隐藏 bug.
+          scripts/config --disable CONFIG_CC_STACKPROTECTOR_NONE || true
+          scripts/config --enable CONFIG_CC_STACKPROTECTOR || true
+          scripts/config --enable CONFIG_CC_STACKPROTECTOR_STRONG || true
           # 关键: 关闭 appended DTB, 产出纯 Image.gz (设备用 dtbo 分区提供 DTB)
           scripts/config --disable CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE
           # 禁用 FTS/FocalTech 触摸驱动 (厂商私有固件 blob 缺失); 实机固件由 vendor 分区加载
