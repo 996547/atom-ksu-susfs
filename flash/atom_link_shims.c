@@ -201,12 +201,46 @@ phys_addr_t swpm_mem_addr_request(void)
     return 0;
 }
 
-/* ---------------- PPM 桩 (ppm_v3 平台模块公开树缺失) (weak) ---------------- */
+/* ---------------- fpsgo / GED 函数指针桩 (weak) ---------------- */
+/*
+ * 【致命陷阱 - 必须按"数据"而非"函数"提供】
+ * ged_kpi_output_gfx_info2_fp 是【函数指针变量】, MTK 以 _fp 后缀标注。
+ * 由 drivers/misc/mediatek/performance/fpsgo_v3/fstb/fstb.c 的
+ * mtk_fstb_init() 引用, 形态为 `if (fp) fp(...)` 间接调用。
+ *
+ * 若误桩成函数 `long NAME(void){return 0;}`:
+ *   调用方 `ldr x0, [NAME]` 读到的是桩函数的【机器码字节】
+ *   (mov w0,#0 / ret 的编码), 而非指针值 -> blr 跳到垃圾地址
+ *   -> 静默挂死被硬件看门狗咬, 或指令中止; 且因发生在 ramoops
+ *   注册(device_initcall) 之前, 完全没有日志输出 = "零 printk"。
+ *
+ * 必须提供【存储】且初值 NULL, 让 `if (fp)` 判定为假走安全分支。
+ * 注: gen_link_stubs.py 已同步修复(识别 (*NAME)( 形态为数据), 此处
+ *     再显式给出精确类型, 两处都是零初始化, 取哪一个都等价安全。
+ */
 __attribute__((weak))
-struct mt_ppm_client_req *mt_ppm_register_client(int client)
-{
-    return ERR_PTR(-ENODEV);
-}
+int (*ged_kpi_output_gfx_info2_fp)(void *, unsigned int, unsigned int,
+                                   unsigned int, unsigned int,
+                                   unsigned int) = NULL;
+
+/*
+ * mtk_notify_gpu_power_change / ged_kpi_set_target_FPS_margin 是普通函数,
+ * 返回 0 即可(GPU 已禁用, 调用方忽略返回值或走失败分支)。
+ */
+__attribute__((weak))
+int mtk_notify_gpu_power_change(int power_on) { return 0; }
+
+__attribute__((weak))
+int ged_kpi_set_target_FPS_margin(int margin) { return 0; }
+
+/* ---------------- PPM 桩 (ppm_v3 平台模块公开树缺失) (weak) ---------------- */
+/* 真实声明 (mtk_ppm_api.h:122) 为 `void mt_ppm_register_client(enum ppm_client,
+ * void (*limit)(struct ppm_client_req))` —— 返回 void, 且调用方 (mtk_cpuhp_ppm.c /
+ * mtk_cpufreq_main.c) 均忽略返回值。原桩误写成返回 `struct mt_ppm_client_req *`
+ * 并 return ERR_PTR, 与真实签名不符 (尽管调用方忽略返回值故功能上 benign)。此处
+ * 对齐真实签名, 消费两个入参、返回 void, 消除类型错配隐患。 */
+__attribute__((weak))
+void mt_ppm_register_client(int client, void *cb) { }
 __attribute__((weak))
 int mt_ppm_set_dvfs_table(struct mt_ppm_table_info *info)
 {

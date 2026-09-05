@@ -428,7 +428,11 @@ echo "==> 6b. 开机兼容性校正（对齐原厂 IKCONFIG）"
 #     含义「对会增大对象体积的 cache 关闭 debug」），我们是 slub_debug=0（数字零，
 #     非法 flag，内核解析时会走 unknown 分支）。一字之差，顺手改正。
 ./scripts/config --file "$OUT/.config" \
-  --set-str CONFIG_CMDLINE "console=tty0 console=ttyMT3,921600n1 root=/dev/ram vmalloc=496M slub_max_order=0 slub_debug=O "
+  --set-str CONFIG_CMDLINE "console=tty0 console=ttyMT3,921600n1 root=/dev/ram vmalloc=496M slub_max_order=0 slub_debug=O earlycon keep_bootcon "
+# 诊断增强：确保极早期持久控制台开启, 打破「零输出」误判 (崩溃在 console_init 之前时也能留下痕迹)
+./scripts/config --file "$OUT/.config" \
+  -e CONFIG_MTK_RAM_CONSOLE -e CONFIG_PSTORE_CONSOLE -e CONFIG_PSTORE_RAM \
+  -e CONFIG_SERIAL_EARLYCON -e CONFIG_ARM64_EARLYCON
 if [ "$WITH_SUSFS" = "1" ]; then
   ./scripts/config --file "$OUT/.config" \
     -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT \

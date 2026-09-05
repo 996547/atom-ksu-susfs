@@ -102,6 +102,18 @@ def git_grep(root, pattern):
 
 def classify(root, name):
     """判定符号是数据还是函数. 返回 'data' / 'func'."""
+    # 0) 【最高优先级】函数指针变量: `(*NAME)(` 形态.
+    #    这是致命陷阱: 若误桩成函数, 调用方 `if (fp) fp(...)` 会
+    #    ldr 出桩函数的【机器码字节】当指针值, 再 blr 跳到垃圾地址
+    #    -> 静默挂死(看门狗咬) 或指令中止, 且无任何 oops 输出.
+    #    典型: ged_kpi_output_gfx_info2_fp (fstb.c mtk_fstb_init 引用)
+    fp_pat = r"\(\s*\*\s*%s\s*\)\s*\(" % re.escape(name)
+    if git_grep(root, fp_pat).strip():
+        return "data"
+    # 0b) MTK 约定: 以 _fp 结尾的通常是函数指针变量(声明可能藏在 .c 里)
+    if name.endswith("_fp"):
+        print("[gen_stub] NOTE: %s 以 _fp 结尾, 按【函数指针(数据)】处理" % name)
+        return "data"
     # 1) 明确的数据声明: extern <type> NAME;  /  extern <type> NAME[..];
     data_pat = r"^\s*extern\s+[^;()]*\b%s\s*(\[[^]]*\])?\s*;" % re.escape(name)
     if git_grep(root, data_pat).strip():
