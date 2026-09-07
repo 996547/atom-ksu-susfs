@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       KERNEL_BRANCH:
-        description: '内核源码分支 (mt6873-dev/android_kernel_xiaomi_mt6885)'
+        description: '内核源码分支 (mt6873-dev/kernel_redmi_atom @ android-4.14-r-stable = 4.14.186, 与原厂一致)'
         required: true
-        default: 'cgroup-v2'
+        default: 'android-4.14-r-stable'
       VENDOR_BRANCH:
         description: 'MTK_kernel_modules 分支'
         required: true
@@ -49,11 +49,17 @@ jobs:
           sudo apt-get install -y bc bison flex libssl-dev make git curl zip \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3
 
-      - name: 克隆内核源码 (mt6873-dev/android_kernel_xiaomi_mt6885 @ cgroup-v2, 完整 atom/MT6873 树 + SukiSU 子模块, clang r383902)
+      - name: 克隆内核源码 (mt6873-dev/kernel_redmi_atom @ android-4.14-r-stable, 4.14.186 与原厂一致)
         run: |
+          # 【根因修复】此前用 mt6873-dev/android_kernel_xiaomi_mt6885 @ cgroup-v2,
+          #   该树是 4.14.336-AstroKernel 的"自定义 ROM 内核"(for atom/bomb/cezanne, backported BPF),
+          #   而本机原厂内核是 4.14.186-perf-00253 —— 版本与定位均不符, 刷入官方 MIUI 必然早期 hang/bootloop。
+          #   正确树: kernel_redmi_atom @ android-4.14-r-stable = 4.14.186, 且含
+          #   arch/arm64/configs/vendor/atom_user_defconfig 与完整 drivers/misc/mediatek。
           git clone --single-branch --depth=1 \
-            --branch "${{ github.event.inputs.KERNEL_BRANCH || 'cgroup-v2' }}" \
-            https://github.com/mt6873-dev/android_kernel_xiaomi_mt6885.git kernel
+            --branch "${{ github.event.inputs.KERNEL_BRANCH || 'android-4.14-r-stable' }}" \
+            https://github.com/mt6873-dev/kernel_redmi_atom.git kernel
+          cd kernel && echo "克隆完成, 内核版本:" && head -6 Makefile | grep -E "^(VERSION|PATCHLEVEL|SUBLEVEL)"
 
       - name: 修补公开树缺失的 MTK 厂商头文件 (缩减无法编译的专有子系统)
         run: |
