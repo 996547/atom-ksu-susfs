@@ -79,16 +79,17 @@ def main():
                     return m.group(0)
                 target = best_candidate(cands, dirpath)
                 rel = os.path.relpath(target, dirpath).replace(os.sep, '/')
-                # 【关键健壮性】绝不把需要"向上(..)解析"的尖括号包含改写成相对引号包含。
-                #   这类包含本就应由 -I 解析 (如 MTK 公共头 aee.h: iommu Makefile 已加
-                #   -I.../include/mt-plat, <aee.h> 可正确解析)。
-                #   一旦该文件被 fix_parent_quote_includes.py 在其它目录建了符号链接,
-                #   相对引号包含会相对"符号链接所在目录"而非目标文件目录解析 -> 路径失效
-                #   -> 致命编译错误 (atom run #96: mtk_iommu_ext.h 经
-                #   .../mt-plat/mt6873/include/mach/mtk_iommu_ext.h 符号链接被 mt_iommu.h
-                #   包含, 其 "../misc/.../aee.h" 相对符号链接目录解析到不存在的路径)。
-                #   仅改写真正"本地"(同目录或子目录, rel 不含 ..)的包含。
-                if rel.startswith('..'):
+                # 【关键健壮性】仅把"本地驱动头"(候选不在任何 include/ 目录下)的尖括号包含
+                # 改写成相对引号包含。位于 include/ 目录下的候选是规范 -I 头(如 aee.h:
+                # iommu Makefile 已加 -I.../include/mt-plat, <aee.h> 可经 -I 正确解析),
+                # 必须保留尖括号 —— 否则一旦该文件被 fix_parent_quote_includes.py 在其它
+                # 目录建了符号链接, 相对引号包含会相对"符号链接所在目录"解析而失效
+                # (atom run #96/#97: mtk_iommu_ext.h 的 aee.h 即此例, 向上相对包含在
+                # .../mt-plat/mt6873/include/mach/ 符号链接处解析到不存在的路径)。
+                # 非 include/ 下的本地头(如 sspm_reservedmem.h)则必须改写, 因其不经 -I 解析,
+                # 且这类头通常不被跨深度符号链接, 相对引号在符号链接/真实位置均可正确解析。
+                # 判定: 候选路径含名为 include 的目录段即视为规范 -I 头, 保留尖括号。
+                if 'include' in os.path.normpath(target).split(os.sep):
                     return m.group(0)
                 file_rewrites[0] += 1
                 return '%s"%s"' % (m.group(1), rel)
