@@ -25,9 +25,10 @@ if not patched:
 else:
     s = '\n'.join(out)
     s += ('\n\n\t.pushsection .rodata, "a"\n'
+          '.balign 16\n'
           '.Lrfc4106:\n'
           '\t.quad\t0x000200000001\n'
           '\t.quad\t0x3\n'
           '\t.popsection\n')
     open(P, 'w').write(s)
-    print("OK: patched aes-modes.S (AES addends 常量改用 .Lrfc4106 标签间接加载)")
+    print("OK: patched aes-modes.S (AES addends 常量改用 .Lrfc4106 标签间接加载, 16 字节对齐)")
